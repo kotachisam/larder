@@ -1,0 +1,80 @@
+use std::path::PathBuf;
+
+use clap::{Args, Parser, Subcommand, ValueEnum};
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "larder",
+    version,
+    about = "Local cache of LLM CLI transcripts for offline retrieval and querying"
+)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    Ingest(IngestArgs),
+    Watch(WatchArgs),
+    Ask(AskArgs),
+    Digest(DigestArgs),
+    Stats,
+    Path,
+    Reindex,
+    Serve(ServeArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct IngestArgs {
+    #[arg(long)]
+    pub since: Option<String>,
+    #[arg(long)]
+    pub path: Option<PathBuf>,
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct WatchArgs {
+    #[arg(long)]
+    pub path: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct AskArgs {
+    pub query: Vec<String>,
+    #[arg(long, default_value_t = 5)]
+    pub limit: usize,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+    #[arg(long)]
+    pub cmd_only: bool,
+    #[arg(long)]
+    pub raw: bool,
+    #[arg(long)]
+    pub no_color: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DigestArgs {
+    #[arg(long)]
+    pub since: Option<String>,
+    #[arg(long, default_value_t = 10)]
+    pub top: usize,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Args, Debug)]
+pub struct ServeArgs {
+    #[arg(long)]
+    pub stdio: bool,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug)]
+pub enum OutputFormat {
+    Text,
+    Json,
+    Md,
+}
