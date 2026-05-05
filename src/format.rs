@@ -28,11 +28,13 @@ pub fn render_command_only(hits: &[Hit]) -> Option<String> {
 fn render_text(hits: &[Hit], color: bool, raw: bool) -> String {
     let mut out = String::new();
     for (i, h) in hits.iter().enumerate() {
+        let badge = if h.is_subagent { " [subagent]" } else { "" };
         let header = format!(
-            "[{}] {} · {} · score {:.2}",
+            "[{}] {} · {}{} · score {:.2}",
             i + 1,
             fmt_ts(h.ts),
             h.project_path,
+            badge,
             h.score
         );
         if color {
@@ -72,12 +74,14 @@ fn render_text(hits: &[Hit], color: bool, raw: bool) -> String {
 fn render_markdown(hits: &[Hit], raw: bool) -> String {
     let mut out = String::new();
     for (i, h) in hits.iter().enumerate() {
+        let badge = if h.is_subagent { " _(subagent)_" } else { "" };
         let _ = writeln!(
             out,
-            "### {}. {} — `{}`",
+            "### {}. {} — `{}`{}",
             i + 1,
             fmt_ts(h.ts),
-            h.project_path
+            h.project_path,
+            badge
         );
         if let Some(q) = &h.question {
             let _ = writeln!(out, "**Q:** {}", snip(q, raw, 320));

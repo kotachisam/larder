@@ -1,4 +1,4 @@
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 pub const SCHEMA_V1_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS sessions (
@@ -68,3 +68,13 @@ END;
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 INSERT OR IGNORE INTO schema_version VALUES (1);
 "#;
+
+pub const SCHEMA_V2_SQL: &str = r#"
+ALTER TABLE sessions ADD COLUMN parent_session_id TEXT;
+ALTER TABLE sessions ADD COLUMN is_subagent INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_sessions_parent      ON sessions(parent_session_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_is_subagent ON sessions(is_subagent);
+UPDATE schema_version SET version = 2;
+"#;
+
+pub const MIGRATIONS: &[(i32, &str)] = &[(2, SCHEMA_V2_SQL)];

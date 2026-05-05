@@ -5,9 +5,9 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
-use crate::store::schema::SCHEMA_V1_SQL;
+use crate::store::schema::{MIGRATIONS, SCHEMA_V1_SQL};
 
 pub struct Store {
     pub conn: Arc<Mutex<Connection>>,
@@ -26,7 +26,17 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "temp_store", "MEMORY")?;
         conn.execute_batch(SCHEMA_V1_SQL)
-            .context("applying schema")?;
+            .context("applying schema v1")?;
+        let current: i32 = conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+            .optional()?
+            .unwrap_or(1);
+        for (target, sql) in MIGRATIONS {
+            if *target > current {
+                conn.execute_batch(sql)
+                    .with_context(|| format!("applying migration to v{}", target))?;
+            }
+        }
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -76,4 +86,6 @@ pub struct SessionMeta {
     pub started_at: Option<i64>,
     pub ended_at: Option<i64>,
     pub message_count: i64,
+    pub parent_session_id: Option<String>,
+    pub is_subagent: bool,
 }

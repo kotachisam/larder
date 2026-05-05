@@ -19,25 +19,39 @@ pub struct Hit {
     pub stderr: Option<String>,
     pub summary: Option<String>,
     pub score: f64,
+    pub is_subagent: bool,
+    pub parent_session_id: Option<String>,
 }
 
-pub fn search(store: &Store, query: &str, limit: usize) -> Result<Vec<Hit>> {
+pub fn search(
+    store: &Store,
+    query: &str,
+    limit: usize,
+    exclude_subagents: bool,
+) -> Result<Vec<Hit>> {
     let conn = store.conn.lock().unwrap();
     let fts_query = build_fts_query(query);
-    let mut stmt = conn.prepare(
+    let where_subagent = if exclude_subagents {
+        " AND s.is_subagent = 0"
+    } else {
+        ""
+    };
+    let sql = format!(
         r#"
         SELECT
             e.id, e.ts, s.project_path, e.kind,
             e.question, e.command, e.command_stdout, e.command_stderr,
-            e.answer_summary, bm25(entries_fts) AS score
+            e.answer_summary, bm25(entries_fts) AS score,
+            s.is_subagent, s.parent_session_id
         FROM entries_fts
         JOIN entries e ON e.id = entries_fts.rowid
         JOIN sessions s ON s.session_id = e.session_id
-        WHERE entries_fts MATCH ?1
+        WHERE entries_fts MATCH ?1{where_subagent}
         ORDER BY score ASC
         LIMIT ?2
-        "#,
-    )?;
+        "#
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![fts_query, limit as i64], |r| {
         Ok(Hit {
             id: r.get(0)?,
@@ -50,6 +64,8 @@ pub fn search(store: &Store, query: &str, limit: usize) -> Result<Vec<Hit>> {
             stderr: r.get(7)?,
             summary: r.get(8)?,
             score: r.get(9)?,
+            is_subagent: r.get::<_, i64>(10)? != 0,
+            parent_session_id: r.get(11)?,
         })
     })?;
     let mut out = Vec::new();
@@ -86,7 +102,7 @@ pub fn run(args: AskArgs) -> Result<()> {
     if query.trim().is_empty() {
         anyhow::bail!("query is empty");
     }
-    let hits = search(&store, &query, args.limit)?;
+    let hits = search(&store, &query, args.limit, args.no_subagents)?;
     if args.cmd_only {
         match render_command_only(&hits) {
             Some(cmd) => {

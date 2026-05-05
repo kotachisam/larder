@@ -54,6 +54,8 @@ pub struct AskArgs {
     pub raw: bool,
     #[arg(long)]
     pub no_color: bool,
+    #[arg(long)]
+    pub no_subagents: bool,
 }
 
 #[derive(Args, Debug)]

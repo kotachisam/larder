@@ -33,11 +33,17 @@ fn stats() -> Result<()> {
     let paths = Paths::resolve()?;
     let store = Store::open(&paths.db_path)?;
     let sessions = store.session_count()?;
+    let subagents = store.subagent_session_count()?;
     let entries = store.entry_count()?;
     let bash = store.entry_count_by_kind("bash")?;
     let qa = store.entry_count_by_kind("qa")?;
     println!("db:       {}", paths.db_path.display());
-    println!("sessions: {}", sessions);
+    println!(
+        "sessions: {} ({} top-level, {} subagent)",
+        sessions,
+        sessions - subagents,
+        subagents
+    );
     println!("entries:  {} ({} bash, {} qa)", entries, bash, qa);
     Ok(())
 }

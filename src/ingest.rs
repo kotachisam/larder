@@ -109,6 +109,8 @@ fn ingest_one(store: &Store, tp: &TranscriptPath, dry_run: bool) -> Result<Inges
         started_at: parsed.started_at,
         ended_at: parsed.ended_at,
         message_count: parsed.message_count,
+        parent_session_id: tp.parent_session_id.clone(),
+        is_subagent: tp.is_subagent,
     };
     store.upsert_session(&session_meta, Utc::now().timestamp())?;
     let inserted = store.insert_entries(&tp.session_id, &parsed.entries)?;

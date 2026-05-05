@@ -11,18 +11,20 @@ impl Store {
             INSERT INTO sessions (
                 session_id, provider, project_path, source_path,
                 source_mtime, source_size, started_at, ended_at,
-                message_count, ingested_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                message_count, ingested_at, parent_session_id, is_subagent
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             ON CONFLICT(session_id) DO UPDATE SET
-                provider      = excluded.provider,
-                project_path  = excluded.project_path,
-                source_path   = excluded.source_path,
-                source_mtime  = excluded.source_mtime,
-                source_size   = excluded.source_size,
-                started_at    = COALESCE(sessions.started_at, excluded.started_at),
-                ended_at      = excluded.ended_at,
-                message_count = excluded.message_count,
-                ingested_at   = excluded.ingested_at
+                provider          = excluded.provider,
+                project_path      = excluded.project_path,
+                source_path       = excluded.source_path,
+                source_mtime      = excluded.source_mtime,
+                source_size       = excluded.source_size,
+                started_at        = COALESCE(sessions.started_at, excluded.started_at),
+                ended_at          = excluded.ended_at,
+                message_count     = excluded.message_count,
+                ingested_at       = excluded.ingested_at,
+                parent_session_id = excluded.parent_session_id,
+                is_subagent       = excluded.is_subagent
             "#,
             params![
                 meta.session_id,
@@ -35,6 +37,8 @@ impl Store {
                 meta.ended_at,
                 meta.message_count,
                 ingested_at,
+                meta.parent_session_id,
+                meta.is_subagent as i64,
             ],
         )?;
         Ok(())
@@ -120,6 +124,15 @@ impl Store {
         Ok(conn.query_row(
             "SELECT COUNT(*) FROM entries WHERE kind = ?1",
             params![kind],
+            |r| r.get(0),
+        )?)
+    }
+
+    pub fn subagent_session_count(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE is_subagent = 1",
+            [],
             |r| r.get(0),
         )?)
     }
