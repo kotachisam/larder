@@ -4,16 +4,32 @@ pub mod schema;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::Connection;
+
+use crate::store::schema::SCHEMA_V1_SQL;
 
 pub struct Store {
     pub conn: Arc<Mutex<Connection>>,
 }
 
 impl Store {
-    pub fn open(_path: &Path) -> Result<Self> {
-        todo!("store open with WAL + schema migration")
+    pub fn open(path: &Path) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating data dir {}", parent.display()))?;
+        }
+        let conn = Connection::open(path)
+            .with_context(|| format!("opening sqlite at {}", path.display()))?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.pragma_update(None, "temp_store", "MEMORY")?;
+        conn.execute_batch(SCHEMA_V1_SQL)
+            .context("applying schema")?;
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+        })
     }
 }
 
@@ -47,4 +63,17 @@ impl EntryKind {
             Self::Qa => "qa",
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionMeta {
+    pub session_id: String,
+    pub provider: String,
+    pub project_path: String,
+    pub source_path: String,
+    pub source_mtime: i64,
+    pub source_size: i64,
+    pub started_at: Option<i64>,
+    pub ended_at: Option<i64>,
+    pub message_count: i64,
 }

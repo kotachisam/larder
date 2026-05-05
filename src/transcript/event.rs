@@ -45,7 +45,17 @@ pub struct QueueOperationEvent {
 pub struct MessageEnvelope {
     pub role: Option<String>,
     pub model: Option<String>,
-    pub content: Option<Vec<ContentBlock>>,
+    #[serde(default)]
+    pub content: MessageContent,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(untagged)]
+pub enum MessageContent {
+    Text(String),
+    Blocks(Vec<ContentBlock>),
+    #[default]
+    None,
 }
 
 #[derive(Debug, Deserialize)]

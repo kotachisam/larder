@@ -3,6 +3,7 @@ pub const SCHEMA_VERSION: i32 = 1;
 pub const SCHEMA_V1_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS sessions (
   session_id     TEXT PRIMARY KEY,
+  provider       TEXT NOT NULL DEFAULT 'claude',
   project_path   TEXT NOT NULL,
   source_path    TEXT NOT NULL,
   source_mtime   INTEGER NOT NULL,
@@ -13,8 +14,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   ingested_at    INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_path);
-CREATE INDEX IF NOT EXISTS idx_sessions_ended   ON sessions(ended_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_project  ON sessions(project_path);
+CREATE INDEX IF NOT EXISTS idx_sessions_ended    ON sessions(ended_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_provider ON sessions(provider);
 
 CREATE TABLE IF NOT EXISTS entries (
   id              INTEGER PRIMARY KEY,

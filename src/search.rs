@@ -1,7 +1,10 @@
 use anyhow::Result;
+use rusqlite::params;
 use serde::Serialize;
 
 use crate::cli::AskArgs;
+use crate::config::Paths;
+use crate::format::{render_command_only, render_hits};
 use crate::store::Store;
 
 #[derive(Debug, Clone, Serialize)]
@@ -9,6 +12,7 @@ pub struct Hit {
     pub id: i64,
     pub ts: i64,
     pub project_path: String,
+    pub kind: String,
     pub question: Option<String>,
     pub command: Option<String>,
     pub stdout: Option<String>,
@@ -17,10 +21,89 @@ pub struct Hit {
     pub score: f64,
 }
 
-pub fn search(_store: &Store, _query: &str, _limit: usize) -> Result<Vec<Hit>> {
-    todo!("FTS5 search with BM25 ranking")
+pub fn search(store: &Store, query: &str, limit: usize) -> Result<Vec<Hit>> {
+    let conn = store.conn.lock().unwrap();
+    let fts_query = build_fts_query(query);
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT
+            e.id, e.ts, s.project_path, e.kind,
+            e.question, e.command, e.command_stdout, e.command_stderr,
+            e.answer_summary, bm25(entries_fts) AS score
+        FROM entries_fts
+        JOIN entries e ON e.id = entries_fts.rowid
+        JOIN sessions s ON s.session_id = e.session_id
+        WHERE entries_fts MATCH ?1
+        ORDER BY score ASC
+        LIMIT ?2
+        "#,
+    )?;
+    let rows = stmt.query_map(params![fts_query, limit as i64], |r| {
+        Ok(Hit {
+            id: r.get(0)?,
+            ts: r.get(1)?,
+            project_path: r.get(2)?,
+            kind: r.get(3)?,
+            question: r.get(4)?,
+            command: r.get(5)?,
+            stdout: r.get(6)?,
+            stderr: r.get(7)?,
+            summary: r.get(8)?,
+            score: r.get(9)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
 }
 
-pub fn run(_args: AskArgs) -> Result<()> {
-    todo!("ask command: open store, build query, render output")
+fn build_fts_query(raw: &str) -> String {
+    let tokens: Vec<String> = raw
+        .split_whitespace()
+        .map(|t| {
+            let cleaned: String = t
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+                .collect();
+            cleaned
+        })
+        .filter(|t| !t.is_empty())
+        .map(|t| format!("\"{}\"", t))
+        .collect();
+    if tokens.is_empty() {
+        raw.to_string()
+    } else {
+        tokens.join(" ")
+    }
+}
+
+pub fn run(args: AskArgs) -> Result<()> {
+    let paths = Paths::resolve()?;
+    let store = Store::open(&paths.db_path)?;
+    let query = args.query.join(" ");
+    if query.trim().is_empty() {
+        anyhow::bail!("query is empty");
+    }
+    let hits = search(&store, &query, args.limit)?;
+    if args.cmd_only {
+        match render_command_only(&hits) {
+            Some(cmd) => {
+                println!("{}", cmd);
+                Ok(())
+            }
+            None => std::process::exit(1),
+        }
+    } else {
+        let color = !args.no_color && atty_stdout();
+        let out = render_hits(&hits, args.format, color, args.raw)?;
+        print!("{}", out);
+        Ok(())
+    }
+}
+
+fn atty_stdout() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal()
 }
