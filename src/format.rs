@@ -28,7 +28,7 @@ pub fn render_command_only(hits: &[Hit]) -> Option<String> {
 fn render_text(hits: &[Hit], color: bool, raw: bool) -> String {
     let mut out = String::new();
     for (i, h) in hits.iter().enumerate() {
-        let badge = if h.is_subagent { " [subagent]" } else { "" };
+        let badge = subagent_badge(h, false);
         let header = format!(
             "[{}] {} · {}{} · score {:.2}",
             i + 1,
@@ -74,7 +74,7 @@ fn render_text(hits: &[Hit], color: bool, raw: bool) -> String {
 fn render_markdown(hits: &[Hit], raw: bool) -> String {
     let mut out = String::new();
     for (i, h) in hits.iter().enumerate() {
-        let badge = if h.is_subagent { " _(subagent)_" } else { "" };
+        let badge = subagent_badge(h, true);
         let _ = writeln!(
             out,
             "### {}. {} — `{}`{}",
@@ -100,6 +100,21 @@ fn render_markdown(hits: &[Hit], raw: bool) -> String {
         out.push('\n');
     }
     out
+}
+
+fn subagent_badge(h: &Hit, italic: bool) -> String {
+    if !h.is_subagent {
+        return String::new();
+    }
+    let label = match h.subagent_description.as_deref() {
+        Some(d) if !d.is_empty() => format!("subagent: \"{}\"", snip(d, false, 60)),
+        _ => "subagent".to_string(),
+    };
+    if italic {
+        format!(" _({})_", label)
+    } else {
+        format!(" [{}]", label)
+    }
 }
 
 fn fmt_ts(ts: i64) -> String {

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use serde::Deserialize;
 use walkdir::WalkDir;
 
 #[derive(Debug, Clone)]
@@ -11,6 +12,15 @@ pub struct TranscriptPath {
     pub provider: &'static str,
     pub parent_session_id: Option<String>,
     pub is_subagent: bool,
+    pub subagent_description: Option<String>,
+    pub subagent_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubagentMeta {
+    #[serde(rename = "agentType")]
+    agent_type: Option<String>,
+    description: Option<String>,
 }
 
 pub fn walk(root: &Path) -> Result<Vec<TranscriptPath>> {
@@ -51,6 +61,7 @@ pub fn walk(root: &Path) -> Result<Vec<TranscriptPath>> {
                 .and_then(|p| p.file_name())
                 .and_then(|s| s.to_str())
                 .unwrap_or("");
+            let (subagent_description, subagent_type) = read_subagent_meta(path);
             out.push(TranscriptPath {
                 session_id,
                 project_path: decode_project_path(project_dir),
@@ -58,6 +69,8 @@ pub fn walk(root: &Path) -> Result<Vec<TranscriptPath>> {
                 provider: "claude",
                 parent_session_id: Some(parent_session_id),
                 is_subagent: true,
+                subagent_description,
+                subagent_type,
             });
         } else if parent_name.starts_with('-') && entry.depth() == 2 {
             out.push(TranscriptPath {
@@ -67,11 +80,25 @@ pub fn walk(root: &Path) -> Result<Vec<TranscriptPath>> {
                 provider: "claude",
                 parent_session_id: None,
                 is_subagent: false,
+                subagent_description: None,
+                subagent_type: None,
             });
         }
     }
     out.sort_by_key(|tp| tp.is_subagent);
     Ok(out)
+}
+
+fn read_subagent_meta(jsonl_path: &Path) -> (Option<String>, Option<String>) {
+    let meta_path = jsonl_path.with_extension("meta.json");
+    let raw = match std::fs::read_to_string(&meta_path) {
+        Ok(s) => s,
+        Err(_) => return (None, None),
+    };
+    match serde_json::from_str::<SubagentMeta>(&raw) {
+        Ok(m) => (m.description, m.agent_type),
+        Err(_) => (None, None),
+    }
 }
 
 pub fn decode_project_path(encoded: &str) -> String {

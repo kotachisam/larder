@@ -1,4 +1,4 @@
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 pub const SCHEMA_V1_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS sessions (
@@ -77,4 +77,10 @@ CREATE INDEX IF NOT EXISTS idx_sessions_is_subagent ON sessions(is_subagent);
 UPDATE schema_version SET version = 2;
 "#;
 
-pub const MIGRATIONS: &[(i32, &str)] = &[(2, SCHEMA_V2_SQL)];
+pub const SCHEMA_V3_SQL: &str = r#"
+ALTER TABLE sessions ADD COLUMN subagent_description TEXT;
+ALTER TABLE sessions ADD COLUMN subagent_type TEXT;
+UPDATE schema_version SET version = 3;
+"#;
+
+pub const MIGRATIONS: &[(i32, &str)] = &[(2, SCHEMA_V2_SQL), (3, SCHEMA_V3_SQL)];

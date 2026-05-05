@@ -77,10 +77,28 @@ fn ingest_one(store: &Store, tp: &TranscriptPath, dry_run: bool) -> Result<Inges
 
     let prev = store.session_fingerprint(&tp.session_id)?;
     let is_new = prev.is_none();
-    if let Some((prev_mtime, prev_size)) = prev
-        && prev_mtime == mtime
-        && prev_size == size
-    {
+    let unchanged = matches!(prev, Some((m, s)) if m == mtime && s == size);
+
+    if unchanged && !dry_run {
+        let session_meta = SessionMeta {
+            session_id: tp.session_id.clone(),
+            provider: tp.provider.to_string(),
+            project_path: tp.project_path.clone(),
+            source_path: tp.source_path.to_string_lossy().to_string(),
+            source_mtime: mtime,
+            source_size: size,
+            started_at: None,
+            ended_at: None,
+            message_count: 0,
+            parent_session_id: tp.parent_session_id.clone(),
+            is_subagent: tp.is_subagent,
+            subagent_description: tp.subagent_description.clone(),
+            subagent_type: tp.subagent_type.clone(),
+        };
+        store.refresh_session_metadata(&session_meta)?;
+        return Ok(IngestOutcome::Unchanged);
+    }
+    if unchanged {
         return Ok(IngestOutcome::Unchanged);
     }
 
@@ -111,6 +129,8 @@ fn ingest_one(store: &Store, tp: &TranscriptPath, dry_run: bool) -> Result<Inges
         message_count: parsed.message_count,
         parent_session_id: tp.parent_session_id.clone(),
         is_subagent: tp.is_subagent,
+        subagent_description: tp.subagent_description.clone(),
+        subagent_type: tp.subagent_type.clone(),
     };
     store.upsert_session(&session_meta, Utc::now().timestamp())?;
     let inserted = store.insert_entries(&tp.session_id, &parsed.entries)?;

@@ -88,4 +88,6 @@ pub struct SessionMeta {
     pub message_count: i64,
     pub parent_session_id: Option<String>,
     pub is_subagent: bool,
+    pub subagent_description: Option<String>,
+    pub subagent_type: Option<String>,
 }

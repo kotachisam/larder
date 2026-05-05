@@ -21,6 +21,7 @@ pub struct Hit {
     pub score: f64,
     pub is_subagent: bool,
     pub parent_session_id: Option<String>,
+    pub subagent_description: Option<String>,
 }
 
 pub fn search(
@@ -42,7 +43,7 @@ pub fn search(
             e.id, e.ts, s.project_path, e.kind,
             e.question, e.command, e.command_stdout, e.command_stderr,
             e.answer_summary, bm25(entries_fts) AS score,
-            s.is_subagent, s.parent_session_id
+            s.is_subagent, s.parent_session_id, s.subagent_description
         FROM entries_fts
         JOIN entries e ON e.id = entries_fts.rowid
         JOIN sessions s ON s.session_id = e.session_id
@@ -66,6 +67,7 @@ pub fn search(
             score: r.get(9)?,
             is_subagent: r.get::<_, i64>(10)? != 0,
             parent_session_id: r.get(11)?,
+            subagent_description: r.get(12)?,
         })
     })?;
     let mut out = Vec::new();

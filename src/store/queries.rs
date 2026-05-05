@@ -11,20 +11,23 @@ impl Store {
             INSERT INTO sessions (
                 session_id, provider, project_path, source_path,
                 source_mtime, source_size, started_at, ended_at,
-                message_count, ingested_at, parent_session_id, is_subagent
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                message_count, ingested_at, parent_session_id, is_subagent,
+                subagent_description, subagent_type
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             ON CONFLICT(session_id) DO UPDATE SET
-                provider          = excluded.provider,
-                project_path      = excluded.project_path,
-                source_path       = excluded.source_path,
-                source_mtime      = excluded.source_mtime,
-                source_size       = excluded.source_size,
-                started_at        = COALESCE(sessions.started_at, excluded.started_at),
-                ended_at          = excluded.ended_at,
-                message_count     = excluded.message_count,
-                ingested_at       = excluded.ingested_at,
-                parent_session_id = excluded.parent_session_id,
-                is_subagent       = excluded.is_subagent
+                provider             = excluded.provider,
+                project_path         = excluded.project_path,
+                source_path          = excluded.source_path,
+                source_mtime         = excluded.source_mtime,
+                source_size          = excluded.source_size,
+                started_at           = COALESCE(sessions.started_at, excluded.started_at),
+                ended_at             = excluded.ended_at,
+                message_count        = excluded.message_count,
+                ingested_at          = excluded.ingested_at,
+                parent_session_id    = excluded.parent_session_id,
+                is_subagent          = excluded.is_subagent,
+                subagent_description = excluded.subagent_description,
+                subagent_type        = excluded.subagent_type
             "#,
             params![
                 meta.session_id,
@@ -39,6 +42,8 @@ impl Store {
                 ingested_at,
                 meta.parent_session_id,
                 meta.is_subagent as i64,
+                meta.subagent_description,
+                meta.subagent_type,
             ],
         )?;
         Ok(())
@@ -126,6 +131,28 @@ impl Store {
             params![kind],
             |r| r.get(0),
         )?)
+    }
+
+    pub fn refresh_session_metadata(&self, meta: &SessionMeta) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            r#"
+            UPDATE sessions SET
+                parent_session_id    = ?2,
+                is_subagent          = ?3,
+                subagent_description = COALESCE(?4, subagent_description),
+                subagent_type        = COALESCE(?5, subagent_type)
+            WHERE session_id = ?1
+            "#,
+            params![
+                meta.session_id,
+                meta.parent_session_id,
+                meta.is_subagent as i64,
+                meta.subagent_description,
+                meta.subagent_type,
+            ],
+        )?;
+        Ok(())
     }
 
     pub fn subagent_session_count(&self) -> Result<i64> {
