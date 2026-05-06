@@ -1,4 +1,4 @@
-pub const SCHEMA_VERSION: i32 = 4;
+pub const SCHEMA_VERSION: i32 = 5;
 
 pub const SCHEMA_V1_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS sessions (
@@ -117,5 +117,14 @@ END;
 UPDATE schema_version SET version = 4;
 "#;
 
-pub const MIGRATIONS: &[(i32, &str)] =
-    &[(2, SCHEMA_V2_SQL), (3, SCHEMA_V3_SQL), (4, SCHEMA_V4_SQL)];
+pub const SCHEMA_V5_SQL: &str = r#"
+ALTER TABLE entries ADD COLUMN thinking TEXT;
+UPDATE schema_version SET version = 5;
+"#;
+
+pub const MIGRATIONS: &[(i32, &str)] = &[
+    (2, SCHEMA_V2_SQL),
+    (3, SCHEMA_V3_SQL),
+    (4, SCHEMA_V4_SQL),
+    (5, SCHEMA_V5_SQL),
+];

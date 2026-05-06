@@ -74,8 +74,9 @@ impl Store {
                 INSERT OR IGNORE INTO entries (
                     session_id, ts, kind, question, answer_summary,
                     command, command_stdout, command_stderr,
-                    interrupted, truncated, tool_use_id, parent_uuid, source_line
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                    interrupted, truncated, tool_use_id, parent_uuid, source_line,
+                    thinking
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                 "#,
             )?;
             for e in entries {
@@ -93,6 +94,7 @@ impl Store {
                     e.tool_use_id,
                     e.parent_uuid,
                     e.source_line,
+                    e.thinking,
                 ])?;
                 inserted += n;
             }

@@ -97,6 +97,7 @@ impl Extractor {
                                 tool_use_id: Some(tool_use_id.clone()),
                                 parent_uuid: pending.parent_uuid,
                                 source_line: pending.source_line,
+                                thinking: None,
                             });
                         }
                     }
@@ -181,6 +182,7 @@ impl Extractor {
                 tool_use_id: Some(id),
                 parent_uuid: pending.parent_uuid,
                 source_line: pending.source_line,
+                thinking: None,
             });
         }
         out
@@ -209,6 +211,7 @@ impl Extractor {
             tool_use_id: None,
             parent_uuid: q.parent_uuid,
             source_line: q.source_line,
+            thinking: None,
         })
     }
 }

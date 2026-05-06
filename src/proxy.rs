@@ -65,7 +65,12 @@ async fn serve(args: ProxyArgs, store: Arc<Store>) -> Result<()> {
 
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
-    eprintln!("\nlarder proxy shutting down");
+    eprintln!("\nlarder proxy shutting down (Ctrl+C again to force exit)");
+    tokio::spawn(async {
+        let _ = tokio::signal::ctrl_c().await;
+        eprintln!("forcing exit");
+        std::process::exit(130);
+    });
 }
 
 struct ProxyState {
@@ -94,7 +99,9 @@ async fn proxy_handler(
         method == Method::POST && (uri.path() == "/api/chat" || uri.path() == "/api/generate");
 
     let parsed_request = if should_capture {
-        serde_json::from_slice::<Value>(&body_bytes).ok()
+        serde_json::from_slice::<Value>(&body_bytes)
+            .ok()
+            .filter(|v| !is_auxiliary_request(v))
     } else {
         None
     };
@@ -233,6 +240,7 @@ mod async_stream {
 struct ResponseAccumulator {
     buffer: Vec<u8>,
     content: String,
+    thinking: String,
     model: Option<String>,
     final_object: Option<Value>,
 }
@@ -273,6 +281,9 @@ impl ResponseAccumulator {
             .or_else(|| v.get("response").and_then(|x| x.as_str()))
         {
             self.content.push_str(piece);
+        }
+        if let Some(piece) = v.pointer("/message/thinking").and_then(|x| x.as_str()) {
+            self.thinking.push_str(piece);
         }
         if v.get("done").and_then(|x| x.as_bool()) == Some(true) {
             self.final_object = Some(v);
@@ -327,8 +338,14 @@ async fn persist_exchange(
         };
         store.upsert_session(&session_meta, now)?;
 
+        let answer_chars = acc.content.len();
+        let thinking_chars = acc.thinking.len();
+        let preview_q = latest_user_message
+            .as_deref()
+            .map(|s| truncate_for_log(s, 40))
+            .unwrap_or_else(|| "?".to_string());
         let entry = Entry {
-            session_id,
+            session_id: session_meta.session_id.clone(),
             ts: now,
             kind: EntryKind::Qa,
             question: latest_user_message,
@@ -341,8 +358,18 @@ async fn persist_exchange(
             tool_use_id: None,
             parent_uuid: None,
             source_line: message_index,
+            thinking: nonempty(acc.thinking),
         };
         store.insert_entries(&entry.session_id.clone(), &[entry])?;
+        let thinking_label = if thinking_chars > 0 {
+            format!(" · think {} chars", thinking_chars)
+        } else {
+            String::new()
+        };
+        eprintln!(
+            "proxy: captured · {} · turn {} · ans {} chars{} · Q: {}",
+            model, message_index, answer_chars, thinking_label, preview_q
+        );
         Ok(())
     })
     .await
@@ -391,4 +418,45 @@ fn derive_session_id(first_user_message: &str, model: &str) -> String {
 
 fn nonempty(s: String) -> Option<String> {
     if s.is_empty() { None } else { Some(s) }
+}
+
+fn is_auxiliary_request(request: &Value) -> bool {
+    let candidate = if let Some(messages) = request.get("messages").and_then(|m| m.as_array()) {
+        messages
+            .iter()
+            .rev()
+            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+            .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+            .map(str::to_string)
+    } else {
+        request
+            .get("prompt")
+            .and_then(|p| p.as_str())
+            .map(str::to_string)
+    };
+    let Some(text) = candidate else { return false };
+    let trimmed = text.trim_start();
+    if trimmed.starts_with("### Task:") {
+        return true;
+    }
+    let signatures = [
+        "Generate a concise",
+        "Generate 1-3 broad tags",
+        "Suggest 3-5 relevant follow-up",
+        "Generate a JSON array",
+        "Determine the appropriate emoji",
+        "<chat_history>",
+    ];
+    signatures
+        .iter()
+        .any(|sig| trimmed.contains(sig) && trimmed.len() < 4000)
+}
+
+fn truncate_for_log(s: &str, max: usize) -> String {
+    let one_line = s.replace('\n', " ");
+    if one_line.chars().count() <= max {
+        return one_line;
+    }
+    let truncated: String = one_line.chars().take(max).collect();
+    format!("{}…", truncated)
 }

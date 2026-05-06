@@ -58,6 +58,7 @@ pub struct Entry {
     pub tool_use_id: Option<String>,
     pub parent_uuid: Option<String>,
     pub source_line: i64,
+    pub thinking: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
