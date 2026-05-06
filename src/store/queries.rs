@@ -101,6 +101,32 @@ impl Store {
         Ok(inserted)
     }
 
+    pub fn transcript_paths(
+        &self,
+        project_filter: Option<&str>,
+        since_ts: i64,
+    ) -> Result<Vec<std::path::PathBuf>> {
+        let conn = self.conn.lock().unwrap();
+        let normalized_project = project_filter.map(|p| p.trim_end_matches('/').to_string());
+        let mut sql = String::from("SELECT source_path FROM sessions WHERE source_mtime >= ?1");
+        if normalized_project.is_some() {
+            sql.push_str(" AND (project_path = ?2 OR project_path LIKE ?2 || '/%')");
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = if let Some(project) = normalized_project.as_deref() {
+            stmt.query_map(params![since_ts, project], |r| {
+                r.get::<_, String>(0).map(std::path::PathBuf::from)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            stmt.query_map(params![since_ts], |r| {
+                r.get::<_, String>(0).map(std::path::PathBuf::from)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        Ok(rows)
+    }
+
     pub fn qa_summary_for(&self, session_id: &str, question: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         let summary = conn
@@ -186,6 +212,39 @@ impl Store {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn insert_prompt(
+        &self,
+        ts: i64,
+        project_path: &str,
+        prompt_text: &str,
+        pasted_chars: i64,
+        source_hash: &str,
+        ingested_at: i64,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            r#"
+            INSERT OR IGNORE INTO prompts (
+                ts, project_path, prompt_text, pasted_chars, source_hash, ingested_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "#,
+            params![
+                ts,
+                project_path,
+                prompt_text,
+                pasted_chars,
+                source_hash,
+                ingested_at
+            ],
+        )?;
+        Ok(n > 0)
+    }
+
+    pub fn prompt_count(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.query_row("SELECT COUNT(*) FROM prompts", [], |r| r.get(0))?)
     }
 
     pub fn subagent_session_count(&self) -> Result<i64> {

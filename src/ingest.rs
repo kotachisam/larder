@@ -52,6 +52,21 @@ pub fn run(args: IngestArgs) -> Result<()> {
         totals.sessions_unchanged,
         totals.entries_inserted
     );
+    if !args.dry_run {
+        match crate::history::default_path() {
+            Ok(history_path) => match crate::history::ingest(&store, &history_path) {
+                Ok(h) => println!(
+                    "history: {} lines seen, {} prompts new, {} duplicate, {} noise filtered",
+                    h.lines_seen,
+                    h.prompts_inserted,
+                    h.prompts_skipped_duplicate,
+                    h.prompts_skipped_noise,
+                ),
+                Err(e) => warn!(error = ?e, "history ingest failed"),
+            },
+            Err(e) => warn!(error = ?e, "could not resolve history.jsonl path"),
+        }
+    }
     if args.dry_run {
         println!("(dry-run: no writes performed)");
     }

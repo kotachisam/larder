@@ -4,6 +4,7 @@ pub mod digest;
 pub mod extract;
 pub mod format;
 pub mod grep;
+pub mod history;
 pub mod ingest;
 pub mod mcp;
 pub mod search;
@@ -22,6 +23,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Ingest(args) => ingest::run(args),
         Command::Watch(args) => watch::run(args),
         Command::Ask(args) => search::run(args),
+        Command::Asked(args) => search::run_asked(args),
         Command::Grep(args) => grep::run(args),
         Command::Digest(args) => digest::run(args),
         Command::Stats => stats(),
@@ -39,6 +41,7 @@ fn stats() -> Result<()> {
     let entries = store.entry_count()?;
     let bash = store.entry_count_by_kind("bash")?;
     let qa = store.entry_count_by_kind("qa")?;
+    let prompts = store.prompt_count()?;
     println!("db:       {}", paths.db_path.display());
     println!(
         "sessions: {} ({} top-level, {} subagent)",
@@ -47,6 +50,7 @@ fn stats() -> Result<()> {
         subagents
     );
     println!("entries:  {} ({} bash, {} qa)", entries, bash, qa);
+    println!("prompts:  {} (history.jsonl)", prompts);
     Ok(())
 }
 

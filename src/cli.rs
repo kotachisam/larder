@@ -18,6 +18,7 @@ pub enum Command {
     Ingest(IngestArgs),
     Watch(WatchArgs),
     Ask(AskArgs),
+    Asked(AskedArgs),
     Grep(GrepArgs),
     Digest(DigestArgs),
     Stats,
@@ -57,6 +58,21 @@ pub struct AskArgs {
     pub no_color: bool,
     #[arg(long)]
     pub no_subagents: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct AskedArgs {
+    pub query: Vec<String>,
+    #[arg(short = 'l', long, default_value_t = 10)]
+    pub limit: usize,
+    #[arg(long)]
+    pub since: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+    #[arg(long)]
+    pub no_color: bool,
 }
 
 #[derive(Args, Debug)]

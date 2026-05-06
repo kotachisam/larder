@@ -2,9 +2,9 @@ use anyhow::Result;
 use rusqlite::params;
 use serde::Serialize;
 
-use crate::cli::AskArgs;
+use crate::cli::{AskArgs, AskedArgs};
 use crate::config::Paths;
-use crate::format::{render_command_only, render_hits};
+use crate::format::{render_command_only, render_hits, render_prompts};
 use crate::store::Store;
 
 #[derive(Debug, Clone, Serialize)]
@@ -181,4 +181,95 @@ pub fn run(args: AskArgs) -> Result<()> {
 fn atty_stdout() -> bool {
     use std::io::IsTerminal;
     std::io::stdout().is_terminal()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PromptHit {
+    pub id: i64,
+    pub ts: i64,
+    pub project_path: String,
+    pub prompt_text: String,
+    pub pasted_chars: i64,
+    pub score: f64,
+}
+
+pub fn search_prompts(
+    store: &Store,
+    query: &str,
+    limit: usize,
+    since_ts: i64,
+    project: Option<&str>,
+) -> Result<Vec<PromptHit>> {
+    let conn = store.conn.lock().unwrap();
+    let fts_query = build_fts_query(query);
+    let normalized_project = project.map(|p| p.trim_end_matches('/').to_string());
+    let base = r#"
+        SELECT
+            p.id, p.ts, p.project_path, p.prompt_text, p.pasted_chars,
+            bm25(prompts_fts) AS score
+        FROM prompts_fts
+        JOIN prompts p ON p.id = prompts_fts.rowid
+        WHERE prompts_fts MATCH ?1
+          AND p.ts >= ?2
+    "#;
+    let rows = if let Some(project) = normalized_project.as_deref() {
+        let sql = format!(
+            "{base} AND (p.project_path = ?3 OR p.project_path LIKE ?3 || '/%') ORDER BY score ASC LIMIT ?4"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        stmt.query_map(
+            params![fts_query, since_ts, project, limit as i64],
+            map_prompt_hit,
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+    } else {
+        let sql = format!("{base} ORDER BY score ASC LIMIT ?3");
+        let mut stmt = conn.prepare(&sql)?;
+        stmt.query_map(params![fts_query, since_ts, limit as i64], map_prompt_hit)?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    Ok(rows)
+}
+
+fn map_prompt_hit(r: &rusqlite::Row) -> rusqlite::Result<PromptHit> {
+    Ok(PromptHit {
+        id: r.get(0)?,
+        ts: r.get(1)?,
+        project_path: r.get(2)?,
+        prompt_text: r.get(3)?,
+        pasted_chars: r.get(4)?,
+        score: r.get(5)?,
+    })
+}
+
+pub fn run_asked(args: AskedArgs) -> Result<()> {
+    let paths = Paths::resolve()?;
+    let store = Store::open(&paths.db_path)?;
+    let query = args.query.join(" ");
+    if query.trim().is_empty() {
+        anyhow::bail!("query is empty");
+    }
+    let since_ts = since_seconds(args.since.as_deref())?;
+    let hits = search_prompts(
+        &store,
+        &query,
+        args.limit,
+        since_ts,
+        args.project.as_deref(),
+    )?;
+    let color = !args.no_color && atty_stdout();
+    let out = render_prompts(&hits, args.format, color)?;
+    print!("{}", out);
+    Ok(())
+}
+
+fn since_seconds(spec: Option<&str>) -> Result<i64> {
+    use chrono::Utc;
+    let Some(s) = spec else {
+        return Ok(0);
+    };
+    let now = Utc::now().timestamp();
+    let dur = humantime::parse_duration(s)
+        .map_err(|e| anyhow::anyhow!("invalid --since '{}': {}", s, e))?;
+    Ok(now - dur.as_secs() as i64)
 }

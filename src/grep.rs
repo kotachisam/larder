@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::SystemTime;
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
@@ -13,21 +12,24 @@ use crate::cli::GrepArgs;
 use crate::config::Paths;
 use crate::search::{Hit, hits_by_entry_ids};
 use crate::store::Store;
-use crate::transcript::walk;
 
 pub fn run(args: GrepArgs) -> Result<()> {
     let paths = Paths::resolve()?;
-    let root = args.path.clone().unwrap_or(paths.transcripts_dir.clone());
+    let store = Store::open(&paths.db_path)?;
     let since_ts = since_seconds(args.since.as_deref())?;
-    let files = collect_files(&root, args.project.as_deref(), since_ts)?;
+    let files = if let Some(custom_path) = &args.path {
+        collect_files_from_disk(custom_path)?
+    } else {
+        store.transcript_paths(args.project.as_deref(), since_ts)?
+    };
     if files.is_empty() {
-        eprintln!("no transcripts match filters");
+        eprintln!("no transcripts match filters (run `larder ingest` if you haven't yet)");
         std::process::exit(1);
     }
     if args.raw {
         run_raw(&args, &files)
     } else {
-        run_pretty(&args, &files, &paths.db_path)
+        run_pretty(&args, &store, &files)
     }
 }
 
@@ -58,13 +60,12 @@ fn run_raw(args: &GrepArgs, files: &[PathBuf]) -> Result<()> {
     }
 }
 
-fn run_pretty(args: &GrepArgs, files: &[PathBuf], db_path: &Path) -> Result<()> {
+fn run_pretty(args: &GrepArgs, store: &Store, files: &[PathBuf]) -> Result<()> {
     let matches = run_rg_json(args, files)?;
     if matches.is_empty() {
         println!("no matches");
         return Ok(());
     }
-    let store = Store::open(db_path)?;
     let mut counts: HashMap<i64, usize> = HashMap::new();
     for m in &matches {
         let Some(session_id) = path_to_session_id(&m.file) else {
@@ -82,11 +83,11 @@ fn run_pretty(args: &GrepArgs, files: &[PathBuf], db_path: &Path) -> Result<()> 
         return Ok(());
     }
     let entry_ids: Vec<i64> = counts.keys().copied().collect();
-    let mut hits = hits_by_entry_ids(&store, &entry_ids)?;
+    let mut hits = hits_by_entry_ids(store, &entry_ids)?;
     for hit in &mut hits {
         hit.raw_matches = counts.get(&hit.id).copied();
     }
-    let mut groups = group_into_turns(&store, hits)?;
+    let mut groups = group_into_turns(store, hits)?;
     if args.by_hits {
         groups.sort_by(|a, b| {
             b.total_matches
@@ -340,17 +341,9 @@ fn path_to_session_id(path: &Path) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-fn collect_files(root: &Path, project: Option<&str>, since_ts: i64) -> Result<Vec<PathBuf>> {
-    let transcripts = walk(root)?;
-    Ok(transcripts
-        .into_iter()
-        .filter(|tp| match project {
-            Some(p) => tp.project_path == p || tp.project_path.starts_with(p),
-            None => true,
-        })
-        .filter(|tp| since_ts == 0 || file_mtime(&tp.source_path) >= since_ts)
-        .map(|tp| tp.source_path)
-        .collect())
+fn collect_files_from_disk(root: &Path) -> Result<Vec<PathBuf>> {
+    let transcripts = crate::transcript::walk(root)?;
+    Ok(transcripts.into_iter().map(|tp| tp.source_path).collect())
 }
 
 fn since_seconds(spec: Option<&str>) -> Result<i64> {
@@ -361,15 +354,6 @@ fn since_seconds(spec: Option<&str>) -> Result<i64> {
     let dur = humantime::parse_duration(s)
         .map_err(|e| anyhow::anyhow!("invalid --since '{}': {}", s, e))?;
     Ok(now - dur.as_secs() as i64)
-}
-
-fn file_mtime(path: &Path) -> i64 {
-    std::fs::metadata(path)
-        .ok()
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 fn atty_stdout() -> bool {

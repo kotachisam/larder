@@ -298,6 +298,57 @@ For a richer "show me the conversation around this hit" experience, that's
 a future `larder grep --pretty` mode (not built yet — file an issue if you
 hit a case where you need it).
 
+### 3.13 Long-tail prompt recall (history.jsonl)
+
+`larder ingest` also reads `~/.claude/history.jsonl` (Claude Code's
+append-only log of every prompt you've ever typed, persisted independently
+of transcript retention) and indexes them as a separate `prompts` table.
+This recovers the *what was I asking about* signal for conversations whose
+transcripts have already been pruned.
+
+```bash
+larder ingest                                      # ingests transcripts AND history
+larder stats                                       # shows prompt count
+larder asked "tjournal sqlite" -l 5                # text-only prompt search
+larder asked "kanban" --since 60d                  # restrict by prompt timestamp
+larder asked "RESEND" --project /Users/sam_r/Developer/jam
+```
+
+Output renders with a `[history]` badge:
+
+```text
+[1] 2026-04-28 17:39 · /Users/sam_r/Developer/oss/tjournal [history] · score -14.68
+  Q: cargo run -- --sqlite-file-path /tmp/tjournal-p-test.db --backend-type sqlite
+     Well previously you've given me this (snagged from atuin) but I'd like a perma-path
+```
+
+Three things to verify:
+
+- `larder stats` shows a non-zero `prompts:` line. Expect roughly 10k-15k
+  for a heavy user with several months of history.
+- `larder ingest` summary mentions both transcripts and history:
+  `history: <N> lines seen, <M> prompts new, <K> duplicate, <L> noise filtered`.
+- Prompt-only hits surface old conversations that `larder ask` can't find
+  because their transcripts were pruned by Claude Code's `cleanupPeriodDays`
+  before larder existed. This is the recovery layer.
+
+#### What gets filtered
+
+- Empty prompts.
+- Slash commands (`/fast`, `/clear`, `/skill-name`, etc.).
+
+Single-character commands (`q`, `y`, `n`) are kept — short isn't the same
+as noise. Tune `is_meaningful` in `src/history.rs` if your history has
+patterns worth filtering.
+
+#### Why a separate command
+
+`larder ask` searches the rich Q→A→Bash entries (post-extraction). Mixing
+prompt-only hits into those results would dilute BM25 ranking with
+incomplete data (no answer, no command). `larder asked` is the dedicated
+prompt-only command — use it as a fallback when `larder ask` returns
+nothing for an old topic.
+
 ## 4. Lint and format
 
 Run before committing:
@@ -337,7 +388,9 @@ extractor or schema.
   `sam_r`) are encoded as hyphens by Claude Code, indistinguishable from
   real path separators. Mitigated by reading `cwd` from the first event of
   each transcript when present (the canonical path lives there); the
-  decoder is only a fallback.
+  decoder is only a fallback. `larder grep --project` queries against the
+  canonical `sessions.project_path` directly so the lossiness no longer
+  bites on filtering.
 - **`--cmd-only` self-recursion.** See section 3.8. `larder ask --cmd-only`
   output containing nested `larder ask` calls breaks `$()` substitution.
   Won't fix in v0.1; document and move on.

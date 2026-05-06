@@ -1,4 +1,4 @@
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 4;
 
 pub const SCHEMA_V1_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS sessions (
@@ -83,4 +83,39 @@ ALTER TABLE sessions ADD COLUMN subagent_type TEXT;
 UPDATE schema_version SET version = 3;
 "#;
 
-pub const MIGRATIONS: &[(i32, &str)] = &[(2, SCHEMA_V2_SQL), (3, SCHEMA_V3_SQL)];
+pub const SCHEMA_V4_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS prompts (
+  id            INTEGER PRIMARY KEY,
+  ts            INTEGER NOT NULL,
+  project_path  TEXT NOT NULL,
+  prompt_text   TEXT NOT NULL,
+  pasted_chars  INTEGER NOT NULL DEFAULT 0,
+  source_hash   TEXT NOT NULL UNIQUE,
+  ingested_at   INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_prompts_ts      ON prompts(ts DESC);
+CREATE INDEX IF NOT EXISTS idx_prompts_project ON prompts(project_path);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS prompts_fts USING fts5(
+  prompt_text,
+  content='prompts', content_rowid='id',
+  tokenize='porter unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS prompts_ai AFTER INSERT ON prompts BEGIN
+  INSERT INTO prompts_fts(rowid, prompt_text) VALUES (new.id, new.prompt_text);
+END;
+CREATE TRIGGER IF NOT EXISTS prompts_ad AFTER DELETE ON prompts BEGIN
+  INSERT INTO prompts_fts(prompts_fts, rowid, prompt_text) VALUES('delete', old.id, old.prompt_text);
+END;
+CREATE TRIGGER IF NOT EXISTS prompts_au AFTER UPDATE ON prompts BEGIN
+  INSERT INTO prompts_fts(prompts_fts, rowid, prompt_text) VALUES('delete', old.id, old.prompt_text);
+  INSERT INTO prompts_fts(rowid, prompt_text) VALUES (new.id, new.prompt_text);
+END;
+
+UPDATE schema_version SET version = 4;
+"#;
+
+pub const MIGRATIONS: &[(i32, &str)] =
+    &[(2, SCHEMA_V2_SQL), (3, SCHEMA_V3_SQL), (4, SCHEMA_V4_SQL)];

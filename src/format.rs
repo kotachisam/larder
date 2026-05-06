@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use owo_colors::OwoColorize;
 
 use crate::cli::OutputFormat;
-use crate::search::Hit;
+use crate::search::{Hit, PromptHit};
 
 pub fn render_hits(hits: &[Hit], format: OutputFormat, color: bool, raw: bool) -> Result<String> {
     if hits.is_empty() {
@@ -101,6 +101,68 @@ fn render_markdown(hits: &[Hit], raw: bool) -> String {
         {
             let _ = writeln!(out, "> {}", snip(summary, raw, 600));
         }
+        out.push('\n');
+    }
+    out
+}
+
+pub fn render_prompts(hits: &[PromptHit], format: OutputFormat, color: bool) -> Result<String> {
+    if hits.is_empty() {
+        return Ok(match format {
+            OutputFormat::Json => "[]\n".to_string(),
+            _ => "no matches\n".to_string(),
+        });
+    }
+    match format {
+        OutputFormat::Json => Ok(serde_json::to_string_pretty(hits)? + "\n"),
+        OutputFormat::Md => Ok(render_prompts_md(hits)),
+        OutputFormat::Text => Ok(render_prompts_text(hits, color)),
+    }
+}
+
+fn render_prompts_text(hits: &[PromptHit], color: bool) -> String {
+    let mut out = String::new();
+    for (i, h) in hits.iter().enumerate() {
+        let extra = if h.pasted_chars > 0 {
+            format!(" · {} pasted chars", h.pasted_chars)
+        } else {
+            String::new()
+        };
+        let header = format!(
+            "[{}] {} · {} [history]{} · score {:.2}",
+            i + 1,
+            fmt_ts(h.ts),
+            h.project_path,
+            extra,
+            h.score
+        );
+        let _ = if color {
+            writeln!(out, "{}", header.bold())
+        } else {
+            writeln!(out, "{}", header)
+        };
+        let label = if color {
+            "Q:".cyan().to_string()
+        } else {
+            "Q:".to_string()
+        };
+        let _ = writeln!(out, "  {} {}", label, snip(&h.prompt_text, false, 320));
+        out.push('\n');
+    }
+    out
+}
+
+fn render_prompts_md(hits: &[PromptHit]) -> String {
+    let mut out = String::new();
+    for (i, h) in hits.iter().enumerate() {
+        let _ = writeln!(
+            out,
+            "### {}. {} — `{}` _(history)_",
+            i + 1,
+            fmt_ts(h.ts),
+            h.project_path
+        );
+        let _ = writeln!(out, "**Q:** {}", snip(&h.prompt_text, false, 800));
         out.push('\n');
     }
     out
