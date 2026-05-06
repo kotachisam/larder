@@ -2,6 +2,7 @@ pub mod cli;
 pub mod config;
 pub mod digest;
 pub mod extract;
+pub mod find;
 pub mod format;
 pub mod grep;
 pub mod history;
@@ -25,6 +26,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Watch(args) => watch::run(args),
         Command::Ask(args) => search::run(args),
         Command::Asked(args) => search::run_asked(args),
+        Command::Find(args) => find::run(args),
         Command::Grep(args) => grep::run(args),
         Command::Proxy(args) => proxy::run(args),
         Command::Digest(args) => digest::run(args),

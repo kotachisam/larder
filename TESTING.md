@@ -454,6 +454,64 @@ regardless of whether the remote vast.ai instance still exists. Survives
 instance teardown, model swaps, provider changes — all transparent to your
 existing Open WebUI workflow.
 
+### 3.15 Cross-source unified find
+
+`larder find <query>` runs all four search layers in one shot and renders
+the results sectioned by source. The intended use case: "find anything
+related to X across my AI life" — when you can't remember whether the
+thing you're after is a Claude Code conversation, a typed prompt, a raw
+literal in a transcript, or a file you wrote yourself.
+
+```bash
+larder find "bandwidth problem"
+larder find "wrangler tail" -l 10           # 10 hits per section
+larder find "alchemy" --no-files            # skip filesystem scan
+larder find "TODO" --since 7d --no-prompts  # narrow to recent + no history
+```
+
+Sections (top to bottom):
+
+1. **Conversations** — FTS5 BM25 over indexed `entries`. The "what was the
+   conversation about" layer.
+2. **Raw transcript matches** — literal-string `rg` over JSONL transcripts,
+   grouped per project. The "where's the literal hit" layer.
+3. **Prompt history** — FTS5 BM25 over `prompts` (history.jsonl). The
+   "what was I typing about back then" layer.
+4. **Files on disk** — filename-contains scan over default paths. The
+   "where's the artifact" layer.
+
+#### Default scan paths for the filesystem layer
+
+Bounded to keep latency low. Currently hardcoded:
+
+- `~/Developer`
+- `~/Documents`
+- `~/.claude/projects`
+
+Skipped subdirs: `node_modules`, `target`, `.git`, `dist`, `.next`,
+`.venv`, `__pycache__`, `build`. Max depth 6, max 30 hits returned.
+
+#### Flags to disable individual sections
+
+- `--no-files` — skip filesystem find (use when scanning is slow or noisy)
+- `--no-grep` — skip raw transcript ripgrep
+- `--no-prompts` — skip history.jsonl prompts
+- `--no-subagents` — exclude subagent entries from the conversations layer
+
+#### Verify
+
+Pick a query you know hits multiple layers — e.g. something you've
+discussed in Claude AND have a file for:
+
+```bash
+larder find "bandwidth problem"
+```
+
+Expect: ≥1 conversation hit, ≥1 raw match, ≥0 prompt hit, ≥1 file. If
+ANY section is unexpectedly empty, the layer it covers may be missing
+data (e.g. zero file hits = your scan paths don't cover where the file
+lives).
+
 ## 4. Lint and format
 
 Run before committing:

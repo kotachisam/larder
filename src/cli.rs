@@ -19,6 +19,7 @@ pub enum Command {
     Watch(WatchArgs),
     Ask(AskArgs),
     Asked(AskedArgs),
+    Find(FindArgs),
     Grep(GrepArgs),
     Proxy(ProxyArgs),
     Digest(DigestArgs),
@@ -74,6 +75,27 @@ pub struct AskedArgs {
     pub format: OutputFormat,
     #[arg(long)]
     pub no_color: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct FindArgs {
+    pub query: Vec<String>,
+    #[arg(short = 'l', long, default_value_t = 5)]
+    pub limit: usize,
+    #[arg(long)]
+    pub since: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+    #[arg(long)]
+    pub no_color: bool,
+    #[arg(long)]
+    pub no_files: bool,
+    #[arg(long)]
+    pub no_grep: bool,
+    #[arg(long)]
+    pub no_prompts: bool,
+    #[arg(long)]
+    pub no_subagents: bool,
 }
 
 #[derive(Args, Debug)]

@@ -1,4 +1,4 @@
-pub const SCHEMA_VERSION: i32 = 5;
+pub const SCHEMA_VERSION: i32 = 6;
 
 pub const SCHEMA_V1_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS sessions (
@@ -122,9 +122,16 @@ ALTER TABLE entries ADD COLUMN thinking TEXT;
 UPDATE schema_version SET version = 5;
 "#;
 
+pub const SCHEMA_V6_SQL: &str = r#"
+ALTER TABLE prompts ADD COLUMN source TEXT NOT NULL DEFAULT 'history';
+CREATE INDEX IF NOT EXISTS idx_prompts_source ON prompts(source);
+UPDATE schema_version SET version = 6;
+"#;
+
 pub const MIGRATIONS: &[(i32, &str)] = &[
     (2, SCHEMA_V2_SQL),
     (3, SCHEMA_V3_SQL),
     (4, SCHEMA_V4_SQL),
     (5, SCHEMA_V5_SQL),
+    (6, SCHEMA_V6_SQL),
 ];
