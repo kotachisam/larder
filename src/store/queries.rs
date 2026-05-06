@@ -101,6 +101,39 @@ impl Store {
         Ok(inserted)
     }
 
+    pub fn qa_summary_for(&self, session_id: &str, question: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let summary = conn
+            .query_row(
+                r#"
+                SELECT answer_summary FROM entries
+                WHERE session_id = ?1
+                  AND kind = 'qa'
+                  AND LOWER(TRIM(question)) = LOWER(TRIM(?2))
+                  AND answer_summary IS NOT NULL
+                ORDER BY ts DESC
+                LIMIT 1
+                "#,
+                params![session_id, question],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(summary)
+    }
+
+    pub fn entry_at_or_before(&self, session_id: &str, source_line: i64) -> Result<Option<i64>> {
+        let conn = self.conn.lock().unwrap();
+        let id = conn
+            .query_row(
+                "SELECT id FROM entries WHERE session_id = ?1 AND source_line <= ?2 ORDER BY source_line DESC LIMIT 1",
+                params![session_id, source_line],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?;
+        Ok(id)
+    }
+
     pub fn last_source_line(&self, session_id: &str) -> Result<Option<i64>> {
         let conn = self.conn.lock().unwrap();
         let max = conn

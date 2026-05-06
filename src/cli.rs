@@ -72,6 +72,12 @@ pub struct GrepArgs {
     pub literal: bool,
     #[arg(long)]
     pub no_color: bool,
+    #[arg(long)]
+    pub raw: bool,
+    #[arg(short = 'l', long, default_value_t = 10)]
+    pub limit: usize,
+    #[arg(long)]
+    pub by_hits: bool,
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub rg_args: Vec<String>,
 }

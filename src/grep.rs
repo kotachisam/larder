@@ -1,35 +1,37 @@
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::fmt::Write;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
 use anyhow::{Context, Result, bail};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use owo_colors::OwoColorize;
+use serde_json::Value;
 
 use crate::cli::GrepArgs;
 use crate::config::Paths;
+use crate::search::{Hit, hits_by_entry_ids};
+use crate::store::Store;
 use crate::transcript::walk;
 
 pub fn run(args: GrepArgs) -> Result<()> {
     let paths = Paths::resolve()?;
     let root = args.path.clone().unwrap_or(paths.transcripts_dir.clone());
     let since_ts = since_seconds(args.since.as_deref())?;
-    let transcripts = walk(&root)?;
-
-    let files: Vec<PathBuf> = transcripts
-        .into_iter()
-        .filter(|tp| match &args.project {
-            Some(p) => tp.project_path == *p || tp.project_path.starts_with(p),
-            None => true,
-        })
-        .filter(|tp| since_ts == 0 || file_mtime(&tp.source_path) >= since_ts)
-        .map(|tp| tp.source_path)
-        .collect();
-
+    let files = collect_files(&root, args.project.as_deref(), since_ts)?;
     if files.is_empty() {
         eprintln!("no transcripts match filters");
         std::process::exit(1);
     }
+    if args.raw {
+        run_raw(&args, &files)
+    } else {
+        run_pretty(&args, &files, &paths.db_path)
+    }
+}
 
+fn run_raw(args: &GrepArgs, files: &[PathBuf]) -> Result<()> {
     let color = if args.no_color { "never" } else { "auto" };
     let mut cmd = Command::new("rg");
     cmd.arg(format!("--color={}", color));
@@ -46,8 +48,7 @@ pub fn run(args: GrepArgs) -> Result<()> {
         cmd.arg(extra);
     }
     cmd.arg("-e").arg(&args.pattern);
-    cmd.args(&files);
-
+    cmd.args(files);
     match cmd.status() {
         Ok(status) => std::process::exit(status.code().unwrap_or(1)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -55,6 +56,301 @@ pub fn run(args: GrepArgs) -> Result<()> {
         }
         Err(e) => Err(e).context("spawning rg"),
     }
+}
+
+fn run_pretty(args: &GrepArgs, files: &[PathBuf], db_path: &Path) -> Result<()> {
+    let matches = run_rg_json(args, files)?;
+    if matches.is_empty() {
+        println!("no matches");
+        return Ok(());
+    }
+    let store = Store::open(db_path)?;
+    let mut counts: HashMap<i64, usize> = HashMap::new();
+    for m in &matches {
+        let Some(session_id) = path_to_session_id(&m.file) else {
+            continue;
+        };
+        if let Ok(Some(entry_id)) = store.entry_at_or_before(&session_id, m.line) {
+            *counts.entry(entry_id).or_insert(0) += 1;
+        }
+    }
+    if counts.is_empty() {
+        println!(
+            "{} raw match(es) found but none mapped to indexed entries — run `larder ingest` first?",
+            matches.len()
+        );
+        return Ok(());
+    }
+    let entry_ids: Vec<i64> = counts.keys().copied().collect();
+    let mut hits = hits_by_entry_ids(&store, &entry_ids)?;
+    for hit in &mut hits {
+        hit.raw_matches = counts.get(&hit.id).copied();
+    }
+    let mut groups = group_into_turns(&store, hits)?;
+    if args.by_hits {
+        groups.sort_by(|a, b| {
+            b.total_matches
+                .cmp(&a.total_matches)
+                .then_with(|| b.ts.cmp(&a.ts))
+        });
+    } else {
+        groups.sort_by_key(|g| std::cmp::Reverse(g.ts));
+    }
+    groups.truncate(args.limit);
+    let color = !args.no_color && atty_stdout();
+    print!("{}", render_groups(&groups, color));
+    Ok(())
+}
+
+#[derive(Debug)]
+struct GrepGroup {
+    ts: i64,
+    project_path: String,
+    is_subagent: bool,
+    subagent_description: Option<String>,
+    question: Option<String>,
+    answer_summary: Option<String>,
+    commands: Vec<GrepCommand>,
+    qa_only_matches: usize,
+    total_matches: usize,
+}
+
+#[derive(Debug)]
+struct GrepCommand {
+    command: String,
+    stdout: Option<String>,
+    matches: usize,
+}
+
+fn group_into_turns(store: &Store, hits: Vec<Hit>) -> Result<Vec<GrepGroup>> {
+    let mut buckets: HashMap<(String, String), GrepGroup> = HashMap::new();
+    for h in hits {
+        let q_key = h.question.as_deref().unwrap_or("").trim().to_lowercase();
+        let key = (h.session_id.clone(), q_key);
+        let matches = h.raw_matches.unwrap_or(0);
+        let entry = buckets.entry(key).or_insert_with(|| GrepGroup {
+            ts: h.ts,
+            project_path: h.project_path.clone(),
+            is_subagent: h.is_subagent,
+            subagent_description: h.subagent_description.clone(),
+            question: h.question.clone(),
+            answer_summary: None,
+            commands: Vec::new(),
+            qa_only_matches: 0,
+            total_matches: 0,
+        });
+        entry.ts = entry.ts.max(h.ts);
+        entry.total_matches += matches;
+        if let Some(cmd) = h.command {
+            entry.commands.push(GrepCommand {
+                command: cmd,
+                stdout: h.stdout,
+                matches,
+            });
+        } else if h.kind == "qa" {
+            if entry.answer_summary.is_none() {
+                entry.answer_summary = h.summary.clone();
+            }
+            entry.qa_only_matches += matches;
+        }
+    }
+    for ((sid, _q_key), group) in buckets.iter_mut() {
+        if group.answer_summary.is_none()
+            && let Some(q) = &group.question
+        {
+            group.answer_summary = store.qa_summary_for(sid, q).unwrap_or(None);
+        }
+    }
+    Ok(buckets.into_values().collect())
+}
+
+fn render_groups(groups: &[GrepGroup], color: bool) -> String {
+    if groups.is_empty() {
+        return "no matches\n".to_string();
+    }
+    let mut out = String::new();
+    for (i, g) in groups.iter().enumerate() {
+        let badge = subagent_badge(g);
+        let total = g.total_matches.max(g.qa_only_matches);
+        let header = if g.commands.is_empty() {
+            format!(
+                "[{}] {} · {}{} · {} {} (qa-only)",
+                i + 1,
+                fmt_ts(g.ts),
+                g.project_path,
+                badge,
+                total,
+                pluralize(total, "match", "matches"),
+            )
+        } else {
+            format!(
+                "[{}] {} · {}{} · {} {} across {} {}",
+                i + 1,
+                fmt_ts(g.ts),
+                g.project_path,
+                badge,
+                total,
+                pluralize(total, "match", "matches"),
+                g.commands.len(),
+                pluralize(g.commands.len(), "command", "commands"),
+            )
+        };
+        let _ = if color {
+            writeln!(out, "{}", header.bold())
+        } else {
+            writeln!(out, "{}", header)
+        };
+        if let Some(q) = &g.question {
+            let label = if color {
+                "Q:".cyan().to_string()
+            } else {
+                "Q:".to_string()
+            };
+            let _ = writeln!(out, "  {} {}", label, snip(q, 240));
+        }
+        if let Some(a) = &g.answer_summary {
+            let label = if color {
+                ">".magenta().to_string()
+            } else {
+                ">".to_string()
+            };
+            let _ = writeln!(out, "  {} {}", label, snip(a, 320));
+        }
+        for cmd in &g.commands {
+            let prompt = if color {
+                "$".green().to_string()
+            } else {
+                "$".to_string()
+            };
+            let count_marker = if cmd.matches > 0 {
+                format!(
+                    "  ({} {})",
+                    cmd.matches,
+                    pluralize(cmd.matches, "match", "matches")
+                )
+            } else {
+                String::new()
+            };
+            let _ = writeln!(
+                out,
+                "  {} {}{}",
+                prompt,
+                snip(&cmd.command, 280),
+                count_marker
+            );
+            if let Some(stdout) = &cmd.stdout {
+                let _ = writeln!(out, "    ↳ {}", snip(stdout, 200));
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn pluralize<'a>(n: usize, one: &'a str, many: &'a str) -> &'a str {
+    if n == 1 { one } else { many }
+}
+
+fn subagent_badge(g: &GrepGroup) -> String {
+    if !g.is_subagent {
+        return String::new();
+    }
+    match g.subagent_description.as_deref() {
+        Some(d) if !d.is_empty() => format!(" [subagent: \"{}\"]", snip(d, 60)),
+        _ => " [subagent]".to_string(),
+    }
+}
+
+fn fmt_ts(ts: i64) -> String {
+    DateTime::<Utc>::from_timestamp(ts, 0)
+        .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| "?".to_string())
+}
+
+fn snip(s: &str, max: usize) -> String {
+    let one_line = s
+        .replace('\n', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if one_line.len() <= max {
+        return one_line;
+    }
+    let mut end = max;
+    while !one_line.is_char_boundary(end) && end > 0 {
+        end -= 1;
+    }
+    format!("{}…", &one_line[..end])
+}
+
+#[derive(Debug)]
+struct RgMatch {
+    file: PathBuf,
+    line: i64,
+}
+
+fn run_rg_json(args: &GrepArgs, files: &[PathBuf]) -> Result<Vec<RgMatch>> {
+    let mut cmd = Command::new("rg");
+    cmd.arg("--json");
+    if args.literal {
+        cmd.arg("-F");
+    }
+    for extra in &args.rg_args {
+        cmd.arg(extra);
+    }
+    cmd.arg("-e").arg(&args.pattern);
+    cmd.args(files);
+    let output = match cmd.output() {
+        Ok(o) => o,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            bail!("ripgrep (rg) not found in PATH. install with: brew install ripgrep")
+        }
+        Err(e) => return Err(e).context("spawning rg"),
+    };
+    let mut out = Vec::new();
+    for line in output.stdout.split(|&b| b == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        let v: Value = match serde_json::from_slice(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if v.get("type").and_then(|t| t.as_str()) != Some("match") {
+            continue;
+        }
+        let file = v
+            .pointer("/data/path/text")
+            .and_then(|x| x.as_str())
+            .map(PathBuf::from);
+        let line_num = v.pointer("/data/line_number").and_then(|x| x.as_i64());
+        if let (Some(file), Some(line_num)) = (file, line_num) {
+            out.push(RgMatch {
+                file,
+                line: line_num,
+            });
+        }
+    }
+    Ok(out)
+}
+
+fn path_to_session_id(path: &Path) -> Option<String> {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+}
+
+fn collect_files(root: &Path, project: Option<&str>, since_ts: i64) -> Result<Vec<PathBuf>> {
+    let transcripts = walk(root)?;
+    Ok(transcripts
+        .into_iter()
+        .filter(|tp| match project {
+            Some(p) => tp.project_path == p || tp.project_path.starts_with(p),
+            None => true,
+        })
+        .filter(|tp| since_ts == 0 || file_mtime(&tp.source_path) >= since_ts)
+        .map(|tp| tp.source_path)
+        .collect())
 }
 
 fn since_seconds(spec: Option<&str>) -> Result<i64> {
@@ -67,11 +363,16 @@ fn since_seconds(spec: Option<&str>) -> Result<i64> {
     Ok(now - dur.as_secs() as i64)
 }
 
-fn file_mtime(path: &std::path::Path) -> i64 {
+fn file_mtime(path: &Path) -> i64 {
     std::fs::metadata(path)
         .ok()
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+fn atty_stdout() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal()
 }

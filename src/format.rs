@@ -29,13 +29,17 @@ fn render_text(hits: &[Hit], color: bool, raw: bool) -> String {
     let mut out = String::new();
     for (i, h) in hits.iter().enumerate() {
         let badge = subagent_badge(h, false);
+        let score_or_hits = match h.raw_matches {
+            Some(n) => format!("{} raw matches", n),
+            None => format!("score {:.2}", h.score),
+        };
         let header = format!(
-            "[{}] {} · {}{} · score {:.2}",
+            "[{}] {} · {}{} · {}",
             i + 1,
             fmt_ts(h.ts),
             h.project_path,
             badge,
-            h.score
+            score_or_hits
         );
         if color {
             let _ = writeln!(out, "{}", header.bold());

@@ -208,29 +208,56 @@ history (older subagent dispatches lack `.meta.json`). If it's zero on a DB
 that previously held subagents, the `refresh_session_metadata` path isn't
 firing — bug.
 
-### 3.12 Raw transcript grep
+### 3.12 Transcript grep
 
 `larder grep` shells out to `rg` against the raw JSONL transcripts under
-`~/.claude/projects` — for cases where FTS5's tokenizer can't see what
-you're after (special chars, exact CLI flags, paste-blob signatures).
+`~/.claude/projects`, then enriches each match by joining back to the
+indexed `entries` table — you see the *conversation turn* the literal
+match belongs to, not the raw JSON-encoded line.
 
 ```bash
-larder grep "VITE_ALCHEMY"                       # regex (default)
-larder grep -F "VITE_ALCHEMY"                    # literal string
-larder grep "wrangler.*--env" --since 7d         # restrict by file mtime
+larder grep "VITE_ALCHEMY"                          # regex (default)
+larder grep -F "VITE_ALCHEMY"                       # literal string
+larder grep "wrangler.*--env" --since 7d            # restrict by mtime
 larder grep "TODO" --project /Users/sam_r/Developer/jam
+larder grep "rate limit" --by-hits -l 5             # sort by match count
 ```
 
-Output uses `--max-columns=300 --max-columns-preview` by default so JSONL
-lines render as a readable preview rather than a wall of JSON. Override
-via `--` passthrough if you need the full line:
+Output groups matches by `(session, question)` so a single conversation
+turn that ran multiple Bash commands collapses into one block:
 
-```bash
-larder grep "X" -- --max-columns=0
+```text
+[3] 2026-05-05 18:28 · /Users/sam_r/Developer/biz/jam · 7 matches across 5 commands
+  Q: I think the alchemy key is failing because in prod I split alchemy
+     into 2 keys in a previous session, 1 for frontend and 1 for server...
+  > Searching transcripts for the previous discussion. The split was:
+    VITE_ALCHEMY_API_KEY (frontend, domain-restricted) and ALCHEMY_API_KEY...
+  $ rg -l "ALCHEMY.*split|split.*alchemy|VITE_ALCHEMY" ...    (1 match)
+    ↳ /Users/sam_r/.claude/projects/...
+  $ rg -A 2 "VITE_ALCHEMY|split.*alchemy" ...                 (2 matches)
+    ↳ {"parentUuid":"0eef5bbd-...
+  ... (3 more commands in this turn)
 ```
 
-Anything after `--` passes through to `rg`, so you get `--count`, `--json`,
-`-A`/`-B`/`-C` context flags, etc., for free.
+Three things to verify:
+
+- The `Q:` line shows your prompt (deduplicated per turn).
+- The `>` line shows the assistant's full response, pulled from the
+  matching QA entry.
+- Each `$` line is one Bash command from that turn, with its own match
+  count. Total in the header sums them.
+
+#### Flags
+
+- `-l/--limit <N>` — max grouped turns to render (default 10).
+- `--by-hits` — sort by total match count (descending) instead of recency.
+  Recency is default.
+- `--raw` — bypass enrichment, fall back to plain `rg --heading
+  --line-number --max-columns=300 --max-columns-preview` over the same
+  filtered file set. Use when you want raw JSONL line context.
+- Anything after `--` passes through to `rg` in both modes:
+  `larder grep "X" -- -A 2 -B 1` for context lines, `-- --json` for
+  machine-readable output.
 
 #### jq recipes for structured extraction
 
