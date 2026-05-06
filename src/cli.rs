@@ -18,6 +18,7 @@ pub enum Command {
     Ingest(IngestArgs),
     Watch(WatchArgs),
     Ask(AskArgs),
+    Grep(GrepArgs),
     Digest(DigestArgs),
     Stats,
     Path,
@@ -56,6 +57,23 @@ pub struct AskArgs {
     pub no_color: bool,
     #[arg(long)]
     pub no_subagents: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct GrepArgs {
+    pub pattern: String,
+    #[arg(long)]
+    pub since: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+    #[arg(long)]
+    pub path: Option<PathBuf>,
+    #[arg(short = 'F', long)]
+    pub literal: bool,
+    #[arg(long)]
+    pub no_color: bool,
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub rg_args: Vec<String>,
 }
 
 #[derive(Args, Debug)]

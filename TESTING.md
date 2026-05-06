@@ -48,8 +48,8 @@ alias larder=$PWD/target/release/larder
 larder path
 ```
 
-Expect `data_dir`, `db_path`, `transcripts_dir` lines. 
-On macOS the data dir is `~/Library/Application Support/larder/`. 
+Expect `data_dir`, `db_path`, `transcripts_dir` lines.
+On macOS the data dir is `~/Library/Application Support/larder/`.
 The DB lives at `<data_dir>/larder.sqlite`.
 
 ### 3.3 First ingest
@@ -81,8 +81,18 @@ to its transcript between runs. Idempotency is enforced by:
 larder stats
 ```
 
-Expect non-zero session and entry counts. Bash + QA should sum to total
-entries.
+Expected output shape:
+
+```text
+db:       /path/to/larder.sqlite
+sessions: <total> (<top-level> top-level, <subagent> subagent)
+entries:  <total> (<bash> bash, <qa> qa)
+```
+
+Bash + QA should sum to total entries. Top-level + subagent should sum to
+total sessions. If subagent count is zero but you've used the Task tool or
+parallel agents, the walker isn't reaching them — check your transcripts
+directory has nested `<session>/subagents/agent-*.jsonl` files.
 
 ### 3.6 Recall queries
 
@@ -118,6 +128,15 @@ $(larder ask --cmd-only "wrangler tail")
 Should print the top hit's command and exit 0 if found, exit 1 (no stdout) if
 not. The non-zero exit prevents accidental empty substitution.
 
+**Self-recursion pitfall:** if your top hit happens to be a meta-command
+that itself invokes `larder ask` (common when testing larder against its own
+session transcripts), the substituted shell command becomes ambiguous —
+pipes, redirects, and flags inside the result get re-parsed by your shell.
+Symptom: clap errors like `error: unexpected argument '-2' found`. This is
+harmless in real-world use (you're recalling commands from days ago, not
+from the session you just ran). If it bites in testing, narrow your query
+or use `larder ask "<query>" --limit 1` and copy the command manually.
+
 ### 3.9 Digest
 
 ```bash
@@ -129,6 +148,128 @@ larder digest --since 30d --top 20 --format md
 groups by `LOWER(TRIM(question))`, so prompts that differ only in whitespace
 or case collapse together. Top-1 is often a canned prompt like "carry on" or
 "proceed" — useful signal for identifying alias candidates.
+
+### 3.10 Subagent verification
+
+Pick a query likely to surface dispatched-agent work (audits, multi-file
+explorations, parallel research):
+
+```bash
+larder ask "comprehensive audit code" --limit 5
+```
+
+Expect inline badges on subagent hits:
+
+```text
+[1] 2026-04-28 19:48 · /Users/sam_r/Developer/samuelk [subagent: "Audit admin serializer bug surface"] · score -9.73
+```
+
+Three things to confirm:
+
+- Subagent hits render with `[subagent: "..."]` when `.meta.json` was
+  present, plain `[subagent]` when absent. Around half of historical
+  subagents lack `.meta.json` — graceful degradation is expected.
+- Filter works: `larder ask "comprehensive audit code" --no-subagents`
+  returns only top-level hits (often zero for subagent-typical queries).
+- Search ordering is BM25, not subagent-vs-not — relevant subagent results
+  can rank above less-relevant top-level results. Intended.
+
+### 3.11 Schema migration verification
+
+Check the current schema version:
+
+```bash
+sqlite3 "$(larder path | awk '/db_path:/ {print $2}')" \
+  'SELECT MAX(version) FROM schema_version;'
+```
+
+Expect the value to match `SCHEMA_VERSION` in `src/store/schema.rs`
+(currently `3`).
+
+To verify migrations apply cleanly to a fresh DB:
+
+```bash
+rm -rf "$(larder path | awk '/data_dir:/ {print $2}')"
+larder ingest                   # builds v3 from scratch
+larder stats                    # should match shape from 3.5
+```
+
+To verify metadata backfill (re-ingest populates new columns on previously
+unchanged sessions):
+
+```bash
+sqlite3 "$(larder path | awk '/db_path:/ {print $2}')" \
+  'SELECT COUNT(*) AS total, COUNT(subagent_description) AS with_desc
+   FROM sessions WHERE is_subagent = 1;'
+```
+
+`with_desc` should be roughly 50% of `total` for a typical Claude Code
+history (older subagent dispatches lack `.meta.json`). If it's zero on a DB
+that previously held subagents, the `refresh_session_metadata` path isn't
+firing — bug.
+
+### 3.12 Raw transcript grep
+
+`larder grep` shells out to `rg` against the raw JSONL transcripts under
+`~/.claude/projects` — for cases where FTS5's tokenizer can't see what
+you're after (special chars, exact CLI flags, paste-blob signatures).
+
+```bash
+larder grep "VITE_ALCHEMY"                       # regex (default)
+larder grep -F "VITE_ALCHEMY"                    # literal string
+larder grep "wrangler.*--env" --since 7d         # restrict by file mtime
+larder grep "TODO" --project /Users/sam_r/Developer/jam
+```
+
+Output uses `--max-columns=300 --max-columns-preview` by default so JSONL
+lines render as a readable preview rather than a wall of JSON. Override
+via `--` passthrough if you need the full line:
+
+```bash
+larder grep "X" -- --max-columns=0
+```
+
+Anything after `--` passes through to `rg`, so you get `--count`, `--json`,
+`-A`/`-B`/`-C` context flags, etc., for free.
+
+#### jq recipes for structured extraction
+
+Raw rg output is JSON-encoded transcript events. Pipe through `rg --json`
+and `jq` for clean structured access:
+
+```bash
+# Just file:line for every match (no JSON noise)
+larder grep "VITE_ALCHEMY" --since 30d -- --json \
+  | jq -r 'select(.type=="match") | "\(.data.path.text):\(.data.line_number)"'
+
+# Match count grouped by transcript file
+larder grep "VITE_ALCHEMY" --since 30d -- --json \
+  | jq -r 'select(.type=="match") | .data.path.text' \
+  | sort | uniq -c | sort -rn
+
+# Pull human-readable content (timestamp · type · text/command) per match
+larder grep -F "VITE_ALCHEMY" --since 7d -- --json --no-filename \
+  | jq -r '
+      select(.type=="match")
+      | .data.lines.text
+      | fromjson?
+      | .timestamp + " " + .type + ": " +
+        ( if .message.content | type == "string" then .message.content
+          elif .message.content then
+            [.message.content[]? | .text? // .input?.command? // empty]
+            | join(" | ")
+          else "" end )
+    '
+```
+
+The third recipe goes through `rg --json` rather than parsing rg's text
+output directly — cleaner, and `fromjson?` silently drops any line that
+isn't a transcript event (e.g. binary chunks). Output: one
+`<timestamp> <type>: <content>` line per hit.
+
+For a richer "show me the conversation around this hit" experience, that's
+a future `larder grep --pretty` mode (not built yet — file an issue if you
+hit a case where you need it).
 
 ## 4. Lint and format
 
@@ -151,3 +292,31 @@ larder ingest
 
 Wipes the database and re-ingests from scratch. Useful when iterating on the
 extractor or schema.
+
+## 6. Known limitations
+
+- **Orphan subagents.** Subagent transcripts whose parent session was
+  pruned by Claude Code's `cleanupPeriodDays` (30-day default) before
+  larder ingested them have a `parent_session_id` that doesn't resolve to
+  any row in `sessions`. They still surface in search; only the parent
+  thread context is lost. Mitigation: set `"cleanupPeriodDays": 3650` in
+  `~/.claude/settings.json` so this stops happening forward.
+- **Subagent metadata coverage ~50%.** Claude Code only started writing
+  `agent-*.meta.json` files at some point in its lifecycle. Older subagent
+  dispatches render as plain `[subagent]` instead of
+  `[subagent: "<description>"]`. Nothing to fix in larder — the data isn't
+  there.
+- **`decode_project_path` is lossy.** Underscores in original paths (e.g.
+  `sam_r`) are encoded as hyphens by Claude Code, indistinguishable from
+  real path separators. Mitigated by reading `cwd` from the first event of
+  each transcript when present (the canonical path lives there); the
+  decoder is only a fallback.
+- **`--cmd-only` self-recursion.** See section 3.8. `larder ask --cmd-only`
+  output containing nested `larder ask` calls breaks `$()` substitution.
+  Won't fix in v0.1; document and move on.
+- **Entry-level subagent linkage absent.** Session-level linkage
+  (subagent.parent_session_id → parent_session.session_id) works. But
+  Claude Code does not record which specific Task tool_use call dispatched
+  which subagent — the `.meta.json` lacks a `tool_use_id` pointer. Could
+  be inferred heuristically (description + timestamp match) but ambiguous
+  when descriptions repeat.

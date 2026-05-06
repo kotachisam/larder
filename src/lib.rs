@@ -3,6 +3,7 @@ pub mod config;
 pub mod digest;
 pub mod extract;
 pub mod format;
+pub mod grep;
 pub mod ingest;
 pub mod mcp;
 pub mod search;
@@ -21,6 +22,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Ingest(args) => ingest::run(args),
         Command::Watch(args) => watch::run(args),
         Command::Ask(args) => search::run(args),
+        Command::Grep(args) => grep::run(args),
         Command::Digest(args) => digest::run(args),
         Command::Stats => stats(),
         Command::Path => path(),
