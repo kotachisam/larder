@@ -7,6 +7,7 @@ pub mod grep;
 pub mod history;
 pub mod ingest;
 pub mod mcp;
+pub mod proxy;
 pub mod search;
 pub mod store;
 pub mod transcript;
@@ -25,6 +26,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Ask(args) => search::run(args),
         Command::Asked(args) => search::run_asked(args),
         Command::Grep(args) => grep::run(args),
+        Command::Proxy(args) => proxy::run(args),
         Command::Digest(args) => digest::run(args),
         Command::Stats => stats(),
         Command::Path => path(),

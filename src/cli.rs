@@ -20,6 +20,7 @@ pub enum Command {
     Ask(AskArgs),
     Asked(AskedArgs),
     Grep(GrepArgs),
+    Proxy(ProxyArgs),
     Digest(DigestArgs),
     Stats,
     Path,
@@ -112,6 +113,16 @@ pub struct DigestArgs {
 pub struct ServeArgs {
     #[arg(long)]
     pub stdio: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ProxyArgs {
+    #[arg(long, default_value = "http://localhost:11434")]
+    pub to: String,
+    #[arg(long, default_value_t = 11435)]
+    pub port: u16,
+    #[arg(long, default_value = "127.0.0.1")]
+    pub bind: String,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug)]

@@ -349,6 +349,111 @@ incomplete data (no answer, no command). `larder asked` is the dedicated
 prompt-only command — use it as a fallback when `larder ask` returns
 nothing for an old topic.
 
+### 3.14 Live capture via Ollama proxy
+
+`larder proxy` runs a streaming HTTP middleware between any Ollama-API
+client (Open WebUI, continue.dev, raw curl) and an Ollama instance — local,
+SSH-tunnelled to a vast.ai box, anywhere reachable. Every `/api/chat` and
+`/api/generate` call is forwarded transparently AND captured into larder's
+entries table at write time.
+
+```bash
+# Start it (defaults to bind 127.0.0.1:11435, forward to localhost:11434)
+larder proxy
+
+# Custom upstream + port
+larder proxy --to http://localhost:11434 --port 11435 --bind 127.0.0.1
+```
+
+Then point your client at `http://localhost:11435` instead of the Ollama
+URL directly. Streaming responses still stream live to the client (no
+buffering). Capture happens after the stream completes.
+
+#### Conversation grouping
+
+Hash-derived `session_id` from `(first_user_message, model)`. Open WebUI
+sends the full message history with every `/api/chat` request, so the same
+conversation always produces the same hash and accumulates entries under
+one session row. New conversations get new hashes automatically.
+
+`source_line` for each entry equals the `messages.len()` at the time of
+the request — the index of the user message in this exchange. So turn 1 is
+`source_line=1`, turn 2 (after one user+assistant pair) is `source_line=3`,
+etc. Gaps are normal (the assistant response sits at the even indices but
+is captured as the answer half of the previous user index's entry).
+
+#### What gets stored
+
+- **Sessions:** `provider='ollama-proxy'`, `project_path='ollama://<model>'`,
+  `source_path='proxy://<model><endpoint>'`. Distinguishes proxy-captured
+  conversations from Claude Code transcripts at a glance.
+- **Entries:** `kind='qa'`, `question`=last user message in the request,
+  `answer_summary`=accumulated assistant content from the streamed response.
+  No commands, no subagents — pure Q→A.
+
+#### Verify end-to-end
+
+```bash
+# Start Ollama (if not running)
+ollama serve > /tmp/ollama.log 2>&1 &
+
+# Start the proxy
+./target/release/larder proxy > /tmp/larder-proxy.log 2>&1 &
+
+# Hit the proxy with a streaming chat
+curl -sN http://localhost:11435/api/chat -d '{
+  "model": "qwen3.5:latest",
+  "messages": [{"role": "user", "content": "What is 2 plus 2?"}]
+}'
+
+# Hit it again with the SAME first message + a new turn (OWUI pattern)
+curl -sN http://localhost:11435/api/chat -d '{
+  "model": "qwen3.5:latest",
+  "messages": [
+    {"role": "user", "content": "What is 2 plus 2?"},
+    {"role": "assistant", "content": "4"},
+    {"role": "user", "content": "And times three?"}
+  ]
+}'
+
+# Both turns should appear under one session
+sqlite3 "$(larder path | awk '/db_path:/ {print $2}')" \
+  "SELECT source_line, substr(question,1,30), substr(answer_summary,1,30)
+   FROM entries WHERE session_id LIKE 'ollama-%' ORDER BY ts, source_line;"
+```
+
+Expected: one session, two entries with `source_line=1` and `source_line=3`.
+
+#### Recall via larder ask
+
+Once captured, proxy conversations are searchable like everything else:
+
+```bash
+larder ask "what is 2 plus 2"
+```
+
+Hits will show `project_path='ollama://qwen3.5:latest'` so you can tell
+they came from the proxy, not from Claude Code.
+
+#### Pairing with vast.ai workflow
+
+If your Ollama is on a remote machine reached via SSH tunnel:
+
+```bash
+# Tunnel from Mac to remote Ollama
+ssh -p PORT -L 11434:localhost:11434 root@REMOTE_IP -N &
+
+# Start the proxy locally — it forwards to your tunnel
+larder proxy --to http://localhost:11434 --port 11435
+
+# Point Open WebUI / clients at http://localhost:11435
+```
+
+Capture happens on your Mac. Conversations persist in larder's local DB
+regardless of whether the remote vast.ai instance still exists. Survives
+instance teardown, model swaps, provider changes — all transparent to your
+existing Open WebUI workflow.
+
 ## 4. Lint and format
 
 Run before committing:
