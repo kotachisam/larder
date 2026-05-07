@@ -15,58 +15,49 @@ pub struct DigestEntry {
     pub example_command: Option<String>,
 }
 
-pub trait Aggregator {
-    fn frequency(&self, store: &Store, since: i64, top: usize) -> Result<Vec<DigestEntry>>;
-}
-
-pub struct SqlAggregator;
-
-impl Aggregator for SqlAggregator {
-    fn frequency(&self, store: &Store, since: i64, top: usize) -> Result<Vec<DigestEntry>> {
-        let conn = store.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT
-                LOWER(TRIM(question))     AS qkey,
-                COUNT(*)                  AS n,
-                MAX(ts)                   AS last_seen,
-                (
-                    SELECT command FROM entries e2
-                    WHERE LOWER(TRIM(e2.question)) = LOWER(TRIM(entries.question))
-                      AND e2.command IS NOT NULL
-                    ORDER BY ts DESC LIMIT 1
-                )                         AS example_command
-            FROM entries
-            WHERE question IS NOT NULL
-              AND TRIM(question) <> ''
-              AND ts >= ?1
-            GROUP BY qkey
-            ORDER BY n DESC, last_seen DESC
-            LIMIT ?2
-            "#,
-        )?;
-        let rows = stmt.query_map(params![since, top as i64], |r| {
-            Ok(DigestEntry {
-                question: r.get::<_, String>(0)?,
-                count: r.get(1)?,
-                last_seen: r.get(2)?,
-                example_command: r.get(3)?,
-            })
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
+pub fn frequency(store: &Store, since: i64, top: usize) -> Result<Vec<DigestEntry>> {
+    let conn = store.conn.lock().unwrap();
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT
+            LOWER(TRIM(question))     AS qkey,
+            COUNT(*)                  AS n,
+            MAX(ts)                   AS last_seen,
+            (
+                SELECT command FROM entries e2
+                WHERE LOWER(TRIM(e2.question)) = LOWER(TRIM(entries.question))
+                  AND e2.command IS NOT NULL
+                ORDER BY ts DESC LIMIT 1
+            )                         AS example_command
+        FROM entries
+        WHERE question IS NOT NULL
+          AND TRIM(question) <> ''
+          AND ts >= ?1
+        GROUP BY qkey
+        ORDER BY n DESC, last_seen DESC
+        LIMIT ?2
+        "#,
+    )?;
+    let rows = stmt.query_map(params![since, top as i64], |r| {
+        Ok(DigestEntry {
+            question: r.get::<_, String>(0)?,
+            count: r.get(1)?,
+            last_seen: r.get(2)?,
+            example_command: r.get(3)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
     }
+    Ok(out)
 }
 
 pub fn run(args: DigestArgs) -> Result<()> {
     let paths = Paths::resolve()?;
     let store = Store::open(&paths.db_path)?;
     let since = since_seconds(args.since.as_deref())?;
-    let agg = SqlAggregator;
-    let entries = agg.frequency(&store, since, args.top)?;
+    let entries = frequency(&store, since, args.top)?;
     print!("{}", render_digest(&entries, args.format));
     Ok(())
 }

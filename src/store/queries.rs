@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use anyhow::Result;
 use rusqlite::{OptionalExtension, params};
 
@@ -256,5 +259,19 @@ impl Store {
             [],
             |r| r.get(0),
         )?)
+    }
+
+    pub fn source_paths_to_projects(&self) -> Result<HashMap<PathBuf, String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT source_path, project_path FROM sessions")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?.into(), r.get::<_, String>(1)?))
+        })?;
+        let mut map = HashMap::new();
+        for row in rows {
+            let (path, project): (PathBuf, String) = row?;
+            map.insert(path, project);
+        }
+        Ok(map)
     }
 }

@@ -86,7 +86,7 @@ fn raw_grep_per_project(
     if files.is_empty() {
         return Ok(Vec::new());
     }
-    let path_to_project = lookup_project_paths(store)?;
+    let path_to_project = store.source_paths_to_projects()?;
     let mut cmd = Command::new("rg");
     cmd.arg("--json")
         .arg("-F")
@@ -143,20 +143,6 @@ fn raw_grep_per_project(
             .then_with(|| b.last_ts.cmp(&a.last_ts))
     });
     Ok(out)
-}
-
-fn lookup_project_paths(store: &Store) -> Result<HashMap<PathBuf, String>> {
-    let conn = store.conn.lock().unwrap();
-    let mut stmt = conn.prepare("SELECT source_path, project_path FROM sessions")?;
-    let rows = stmt.query_map([], |r| {
-        Ok((r.get::<_, String>(0)?.into(), r.get::<_, String>(1)?))
-    })?;
-    let mut map = HashMap::new();
-    for row in rows {
-        let (path, project): (PathBuf, String) = row?;
-        map.insert(path, project);
-    }
-    Ok(map)
 }
 
 fn filesystem_find(query: &str) -> Result<Vec<PathBuf>> {
