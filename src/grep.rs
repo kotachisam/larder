@@ -323,4 +323,3 @@ fn collect_files_from_disk(root: &Path) -> Result<Vec<PathBuf>> {
     let transcripts = crate::transcript::walk(root)?;
     Ok(transcripts.into_iter().map(|tp| tp.source_path).collect())
 }
-

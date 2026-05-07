@@ -182,4 +182,3 @@ fn subagent_badge(h: &Hit, italic: bool) -> String {
         format!(" [{}]", label)
     }
 }
-

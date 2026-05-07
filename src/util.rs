@@ -1,6 +1,75 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 
+#[derive(Debug, Clone, Copy)]
+pub enum DisplayMode {
+    Compact,
+    Full,
+    Raw,
+}
+
+const XML_BLOCKS_TO_STRIP: &[&str] = &[
+    "system-reminder",
+    "command-name",
+    "command-message",
+    "local-command-stdout",
+    "local-command-caveat",
+    "thinking",
+];
+
+pub fn clean_for_display(s: &str) -> String {
+    let mut out = s.to_string();
+    for tag in XML_BLOCKS_TO_STRIP {
+        out = strip_xml_block(&out, tag);
+    }
+    out = compress_marker(&out, "[Pasted text #", "]", "[paste]");
+    out = compress_marker(&out, "[Image #", "]", "[image]");
+    out.trim().to_string()
+}
+
+fn strip_xml_block(s: &str, tag: &str) -> String {
+    let open = format!("<{}>", tag);
+    let close = format!("</{}>", tag);
+    let mut result = String::with_capacity(s.len());
+    let mut cursor = 0;
+    while let Some(start_rel) = s[cursor..].find(&open) {
+        let abs_start = cursor + start_rel;
+        result.push_str(&s[cursor..abs_start]);
+        let body_start = abs_start + open.len();
+        match s[body_start..].find(&close) {
+            Some(end_rel) => cursor = body_start + end_rel + close.len(),
+            None => {
+                result.push_str(&s[abs_start..]);
+                return result;
+            }
+        }
+    }
+    result.push_str(&s[cursor..]);
+    result
+}
+
+fn compress_marker(s: &str, start_marker: &str, end_marker: &str, replacement: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut cursor = 0;
+    while let Some(start_rel) = s[cursor..].find(start_marker) {
+        let abs_start = cursor + start_rel;
+        result.push_str(&s[cursor..abs_start]);
+        let body_start = abs_start + start_marker.len();
+        match s[body_start..].find(end_marker) {
+            Some(end_rel) => {
+                cursor = body_start + end_rel + end_marker.len();
+                result.push_str(replacement);
+            }
+            None => {
+                result.push_str(&s[abs_start..]);
+                return result;
+            }
+        }
+    }
+    result.push_str(&s[cursor..]);
+    result
+}
+
 pub fn since_seconds(spec: Option<&str>) -> Result<i64> {
     let Some(s) = spec else {
         return Ok(0);
@@ -100,5 +169,69 @@ mod tests {
     #[test]
     fn since_seconds_invalid_errors() {
         assert!(since_seconds(Some("not-a-duration")).is_err());
+    }
+
+    #[test]
+    fn clean_strips_system_reminder() {
+        let s = "before <system-reminder>noise here</system-reminder> after";
+        assert_eq!(clean_for_display(s), "before  after");
+    }
+
+    #[test]
+    fn clean_strips_multiline_xml_block() {
+        let s = "before\n<local-command-stdout>line1\nline2</local-command-stdout>\nafter";
+        assert_eq!(clean_for_display(s), "before\n\nafter");
+    }
+
+    #[test]
+    fn clean_strips_multiple_block_types() {
+        let s = "<system-reminder>a</system-reminder>middle<command-name>b</command-name>";
+        assert_eq!(clean_for_display(s), "middle");
+    }
+
+    #[test]
+    fn clean_handles_repeated_blocks() {
+        let s = "<thinking>x</thinking>keep<thinking>y</thinking>";
+        assert_eq!(clean_for_display(s), "keep");
+    }
+
+    #[test]
+    fn clean_leaves_unclosed_block_alone() {
+        let s = "before <system-reminder>unclosed text";
+        assert_eq!(
+            clean_for_display(s),
+            "before <system-reminder>unclosed text"
+        );
+    }
+
+    #[test]
+    fn clean_compresses_paste_marker() {
+        let s = "[Pasted text #43 +35 lines] here is the question";
+        assert_eq!(clean_for_display(s), "[paste] here is the question");
+    }
+
+    #[test]
+    fn clean_compresses_image_marker() {
+        let s = "look at [Image #17] and [Image #18]";
+        assert_eq!(clean_for_display(s), "look at [image] and [image]");
+    }
+
+    #[test]
+    fn clean_passthrough_when_no_patterns() {
+        let s = "just normal user prose with no harness gunk";
+        assert_eq!(clean_for_display(s), s);
+    }
+
+    #[test]
+    fn clean_is_idempotent() {
+        let s = "<system-reminder>a</system-reminder>[Pasted text #1 +2 lines]b";
+        let once = clean_for_display(s);
+        assert_eq!(once, clean_for_display(&once));
+    }
+
+    #[test]
+    fn clean_real_world_zkp_example() {
+        let s = "[Pasted text #43 +35 lines] here's the ZKP questions";
+        assert_eq!(clean_for_display(s), "[paste] here's the ZKP questions");
     }
 }

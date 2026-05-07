@@ -258,4 +258,3 @@ pub fn run_asked(args: AskedArgs) -> Result<()> {
     print!("{}", out);
     Ok(())
 }
-

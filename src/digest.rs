@@ -121,4 +121,3 @@ fn render_md(entries: &[DigestEntry]) -> String {
     }
     out
 }
-
