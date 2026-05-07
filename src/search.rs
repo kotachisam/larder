@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::cli::{AskArgs, AskedArgs};
 use crate::config::Paths;
-use crate::format::{render_command_only, render_hits, render_prompts};
+use crate::format_qa::{render_command_only, render_hits, render_prompts};
 use crate::store::Store;
 use crate::util::{DisplayMode, atty_stdout, since_seconds};
 

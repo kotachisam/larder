@@ -3,7 +3,7 @@ pub mod config;
 pub mod digest;
 pub mod extract;
 pub mod find;
-pub mod format;
+pub mod format_qa;
 pub mod grep;
 pub mod history;
 pub mod ingest;
