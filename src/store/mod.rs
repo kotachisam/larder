@@ -77,6 +77,23 @@ impl EntryKind {
 }
 
 #[derive(Debug, Clone)]
+pub struct EntryRecord {
+    pub id: i64,
+    pub session_id: String,
+    pub ts: i64,
+    pub project_path: String,
+    pub kind: String,
+    pub question: Option<String>,
+    pub command: Option<String>,
+    pub command_stdout: Option<String>,
+    pub command_stderr: Option<String>,
+    pub answer_summary: Option<String>,
+    pub thinking: Option<String>,
+    pub is_subagent: bool,
+    pub subagent_description: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct SessionMeta {
     pub session_id: String,
     pub provider: String,

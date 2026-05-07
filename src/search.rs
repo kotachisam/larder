@@ -5,6 +5,7 @@ use serde::Serialize;
 use crate::cli::{AskArgs, AskedArgs};
 use crate::config::Paths;
 use crate::format_qa::{render_command_only, render_hits, render_prompts};
+use crate::results_cache::{self, CachedHit, ResultsCache};
 use crate::store::Store;
 use crate::util::{DisplayMode, atty_stdout, since_seconds};
 
@@ -211,12 +212,32 @@ pub fn run(args: AskArgs) -> Result<()> {
             None => std::process::exit(1),
         }
     } else {
+        let _ = write_cache("ask", &hits);
         let color = !args.no_color && atty_stdout();
         let mode = display_mode(args.full, args.raw);
         let out = render_hits(&hits, args.format, color, mode)?;
         print!("{}", out);
         Ok(())
     }
+}
+
+pub fn write_cache(produced_by: &str, hits: &[Hit]) -> Result<()> {
+    let cache = ResultsCache {
+        produced_by: produced_by.to_string(),
+        ts: chrono::Utc::now().timestamp(),
+        hits: hits
+            .iter()
+            .enumerate()
+            .map(|(i, h)| CachedHit {
+                rank: i + 1,
+                entry_id: h.id,
+                session_id: h.session_id.clone(),
+                ts: h.ts,
+                project_path: h.project_path.clone(),
+            })
+            .collect(),
+    };
+    results_cache::write(&cache)
 }
 
 #[derive(Debug, Clone, Serialize)]

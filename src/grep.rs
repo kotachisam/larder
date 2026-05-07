@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use crate::cli::GrepArgs;
 use crate::config::Paths;
+use crate::results_cache::{self, CachedHit, ResultsCache};
 use crate::search::{Hit, hits_by_entry_ids};
 use crate::store::Store;
 use crate::util::{atty_stdout, clean_for_display, fmt_ts, since_seconds, snip};
@@ -98,14 +99,36 @@ fn run_pretty(args: &GrepArgs, store: &Store, files: &[PathBuf]) -> Result<()> {
         groups.sort_by_key(|g| std::cmp::Reverse(g.ts));
     }
     groups.truncate(args.limit);
+    let _ = write_grep_cache(&groups);
     let color = !args.no_color && atty_stdout();
     print!("{}", render_groups(&groups, color));
     Ok(())
 }
 
+fn write_grep_cache(groups: &[GrepGroup]) -> Result<()> {
+    let cache = ResultsCache {
+        produced_by: "grep".to_string(),
+        ts: chrono::Utc::now().timestamp(),
+        hits: groups
+            .iter()
+            .enumerate()
+            .map(|(i, g)| CachedHit {
+                rank: i + 1,
+                entry_id: g.representative_entry_id,
+                session_id: g.session_id.clone(),
+                ts: g.ts,
+                project_path: g.project_path.clone(),
+            })
+            .collect(),
+    };
+    results_cache::write(&cache)
+}
+
 #[derive(Debug)]
 struct GrepGroup {
     ts: i64,
+    session_id: String,
+    representative_entry_id: i64,
     project_path: String,
     is_subagent: bool,
     subagent_description: Option<String>,
@@ -131,6 +154,8 @@ fn group_into_turns(store: &Store, hits: Vec<Hit>) -> Result<Vec<GrepGroup>> {
         let matches = h.raw_matches.unwrap_or(0);
         let entry = buckets.entry(key).or_insert_with(|| GrepGroup {
             ts: h.ts,
+            session_id: h.session_id.clone(),
+            representative_entry_id: h.id,
             project_path: h.project_path.clone(),
             is_subagent: h.is_subagent,
             subagent_description: h.subagent_description.clone(),

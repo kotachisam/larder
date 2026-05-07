@@ -21,12 +21,25 @@ pub enum Command {
     Asked(AskedArgs),
     Find(FindArgs),
     Grep(GrepArgs),
+    Open(OpenArgs),
     Proxy(ProxyArgs),
     Digest(DigestArgs),
     Stats,
     Path,
     Reindex,
     Serve(ServeArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct OpenArgs {
+    #[arg(default_value_t = 1)]
+    pub rank: usize,
+    #[arg(long)]
+    pub session: bool,
+    #[arg(long)]
+    pub raw: bool,
+    #[arg(long)]
+    pub no_color: bool,
 }
 
 #[derive(Args, Debug)]

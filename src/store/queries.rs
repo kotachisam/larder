@@ -4,7 +4,25 @@ use std::path::PathBuf;
 use anyhow::Result;
 use rusqlite::{OptionalExtension, params};
 
-use crate::store::{Entry, SessionMeta, Store};
+use crate::store::{Entry, EntryRecord, SessionMeta, Store};
+
+fn map_entry_record(r: &rusqlite::Row) -> rusqlite::Result<EntryRecord> {
+    Ok(EntryRecord {
+        id: r.get(0)?,
+        session_id: r.get(1)?,
+        ts: r.get(2)?,
+        project_path: r.get(3)?,
+        kind: r.get(4)?,
+        question: r.get(5)?,
+        command: r.get(6)?,
+        command_stdout: r.get(7)?,
+        command_stderr: r.get(8)?,
+        answer_summary: r.get(9)?,
+        thinking: r.get(10)?,
+        is_subagent: r.get::<_, i64>(11)? != 0,
+        subagent_description: r.get(12)?,
+    })
+}
 
 impl Store {
     pub fn upsert_session(&self, meta: &SessionMeta, ingested_at: i64) -> Result<()> {
@@ -259,6 +277,46 @@ impl Store {
             [],
             |r| r.get(0),
         )?)
+    }
+
+    pub fn entry_by_id(&self, entry_id: i64) -> Result<Option<EntryRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let row = conn
+            .query_row(
+                r#"
+                SELECT
+                    e.id, e.session_id, e.ts, s.project_path, e.kind,
+                    e.question, e.command, e.command_stdout, e.command_stderr,
+                    e.answer_summary, e.thinking, s.is_subagent, s.subagent_description
+                FROM entries e
+                JOIN sessions s ON s.session_id = e.session_id
+                WHERE e.id = ?1
+                "#,
+                params![entry_id],
+                map_entry_record,
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    pub fn session_entries(&self, session_id: &str) -> Result<Vec<EntryRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT
+                e.id, e.session_id, e.ts, s.project_path, e.kind,
+                e.question, e.command, e.command_stdout, e.command_stderr,
+                e.answer_summary, e.thinking, s.is_subagent, s.subagent_description
+            FROM entries e
+            JOIN sessions s ON s.session_id = e.session_id
+            WHERE e.session_id = ?1
+            ORDER BY e.ts ASC, e.source_line ASC
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![session_id], map_entry_record)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     pub fn source_paths_to_projects(&self) -> Result<HashMap<PathBuf, String>> {

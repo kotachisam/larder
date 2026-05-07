@@ -10,7 +10,7 @@ use walkdir::WalkDir;
 
 use crate::cli::FindArgs;
 use crate::config::Paths;
-use crate::search::{Hit, PromptHit, search, search_prompts};
+use crate::search::{Hit, PromptHit, search, search_prompts, write_cache};
 use crate::store::Store;
 use crate::util::{atty_stdout, clean_for_display, fmt_ts, since_seconds, snip};
 
@@ -37,6 +37,7 @@ pub fn run(args: FindArgs) -> Result<()> {
     }
 
     let entries = search(&store, &query, args.limit, args.no_subagents)?;
+    let _ = write_cache("find", &entries);
     let prompts = if args.no_prompts {
         Vec::new()
     } else {
