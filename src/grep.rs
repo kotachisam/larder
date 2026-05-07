@@ -11,7 +11,7 @@ use crate::cli::GrepArgs;
 use crate::config::Paths;
 use crate::search::{Hit, hits_by_entry_ids};
 use crate::store::Store;
-use crate::util::{atty_stdout, fmt_ts, since_seconds, snip};
+use crate::util::{atty_stdout, clean_for_display, fmt_ts, since_seconds, snip};
 
 pub fn run(args: GrepArgs) -> Result<()> {
     let paths = Paths::resolve()?;
@@ -207,7 +207,12 @@ fn render_groups(groups: &[GrepGroup], color: bool) -> String {
             } else {
                 "Q:".to_string()
             };
-            let _ = writeln!(out, "  {} {}", label, snip(q, 240, false));
+            let _ = writeln!(
+                out,
+                "  {} {}",
+                label,
+                snip(&clean_for_display(q), 240, false)
+            );
         }
         if let Some(a) = &g.answer_summary {
             let label = if color {
@@ -215,7 +220,12 @@ fn render_groups(groups: &[GrepGroup], color: bool) -> String {
             } else {
                 ">".to_string()
             };
-            let _ = writeln!(out, "  {} {}", label, snip(a, 320, false));
+            let _ = writeln!(
+                out,
+                "  {} {}",
+                label,
+                snip(&clean_for_display(a), 320, false)
+            );
         }
         for cmd in &g.commands {
             let prompt = if color {
@@ -257,7 +267,10 @@ fn subagent_badge(g: &GrepGroup) -> String {
         return String::new();
     }
     match g.subagent_description.as_deref() {
-        Some(d) if !d.is_empty() => format!(" [subagent: \"{}\"]", snip(d, 60, false)),
+        Some(d) if !d.is_empty() => format!(
+            " [subagent: \"{}\"]",
+            snip(&clean_for_display(d), 60, false)
+        ),
         _ => " [subagent]".to_string(),
     }
 }

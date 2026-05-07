@@ -12,7 +12,7 @@ use crate::cli::FindArgs;
 use crate::config::Paths;
 use crate::search::{Hit, PromptHit, search, search_prompts};
 use crate::store::Store;
-use crate::util::{atty_stdout, fmt_ts, since_seconds, snip};
+use crate::util::{atty_stdout, clean_for_display, fmt_ts, since_seconds, snip};
 
 const FS_SCAN_PATHS: &[&str] = &["Developer", "Documents", ".claude/projects"];
 const FS_SKIP_DIRS: &[&str] = &[
@@ -234,10 +234,10 @@ fn render(
                 h.score
             );
             if let Some(q) = &h.question {
-                let _ = writeln!(out, "      Q: {}", snip(q, 200, false));
+                let _ = writeln!(out, "      Q: {}", snip(&clean_for_display(q), 200, false));
             }
             if let Some(a) = &h.summary {
-                let _ = writeln!(out, "      > {}", snip(a, 220, false));
+                let _ = writeln!(out, "      > {}", snip(&clean_for_display(a), 220, false));
             }
         }
     }
@@ -283,7 +283,11 @@ fn render(
                 p.project_path,
                 p.score
             );
-            let _ = writeln!(out, "      Q: {}", snip(&p.prompt_text, 220, false));
+            let _ = writeln!(
+                out,
+                "      Q: {}",
+                snip(&clean_for_display(&p.prompt_text), 220, false)
+            );
         }
     }
     out.push('\n');

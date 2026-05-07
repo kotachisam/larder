@@ -5,9 +5,14 @@ use owo_colors::OwoColorize;
 
 use crate::cli::OutputFormat;
 use crate::search::{Hit, PromptHit};
-use crate::util::{fmt_ts, snip};
+use crate::util::{DisplayMode, clean_for_display, fmt_ts, snip};
 
-pub fn render_hits(hits: &[Hit], format: OutputFormat, color: bool, raw: bool) -> Result<String> {
+pub fn render_hits(
+    hits: &[Hit],
+    format: OutputFormat,
+    color: bool,
+    mode: DisplayMode,
+) -> Result<String> {
     if hits.is_empty() {
         return Ok(match format {
             OutputFormat::Json => "[]\n".to_string(),
@@ -16,8 +21,8 @@ pub fn render_hits(hits: &[Hit], format: OutputFormat, color: bool, raw: bool) -
     }
     match format {
         OutputFormat::Json => Ok(serde_json::to_string_pretty(hits)? + "\n"),
-        OutputFormat::Md => Ok(render_markdown(hits, raw)),
-        OutputFormat::Text => Ok(render_text(hits, color, raw)),
+        OutputFormat::Md => Ok(render_markdown(hits, mode)),
+        OutputFormat::Text => Ok(render_text(hits, color, mode)),
     }
 }
 
@@ -25,7 +30,22 @@ pub fn render_command_only(hits: &[Hit]) -> Option<String> {
     hits.iter().find_map(|h| h.command.clone())
 }
 
-fn render_text(hits: &[Hit], color: bool, raw: bool) -> String {
+fn fmt_prose(s: &str, max: usize, mode: DisplayMode) -> String {
+    match mode {
+        DisplayMode::Compact => snip(&clean_for_display(s), max, false),
+        DisplayMode::Full => clean_for_display(s),
+        DisplayMode::Raw => s.to_string(),
+    }
+}
+
+fn fmt_literal(s: &str, max: usize, mode: DisplayMode) -> String {
+    match mode {
+        DisplayMode::Compact => snip(s, max, false),
+        DisplayMode::Full | DisplayMode::Raw => s.to_string(),
+    }
+}
+
+fn render_text(hits: &[Hit], color: bool, mode: DisplayMode) -> String {
     let mut out = String::new();
     for (i, h) in hits.iter().enumerate() {
         let badge = subagent_badge(h, false);
@@ -52,7 +72,7 @@ fn render_text(hits: &[Hit], color: bool, raw: bool) -> String {
             } else {
                 "Q:".to_string()
             };
-            let _ = writeln!(out, "  {} {}", label, snip(q, 240, raw));
+            let _ = writeln!(out, "  {} {}", label, fmt_prose(q, 240, mode));
         }
         if let Some(cmd) = &h.command {
             let label = if color {
@@ -60,22 +80,22 @@ fn render_text(hits: &[Hit], color: bool, raw: bool) -> String {
             } else {
                 "$".to_string()
             };
-            let _ = writeln!(out, "  {} {}", label, snip(cmd, 320, raw));
+            let _ = writeln!(out, "  {} {}", label, fmt_literal(cmd, 320, mode));
         }
         if let Some(stdout) = &h.stdout {
-            let _ = writeln!(out, "  ↳ {}", snip(stdout, 240, raw));
+            let _ = writeln!(out, "  ↳ {}", fmt_literal(stdout, 240, mode));
         }
         if let Some(summary) = &h.summary
             && h.command.is_none()
         {
-            let _ = writeln!(out, "  > {}", snip(summary, 280, raw));
+            let _ = writeln!(out, "  > {}", fmt_prose(summary, 280, mode));
         }
         out.push('\n');
     }
     out
 }
 
-fn render_markdown(hits: &[Hit], raw: bool) -> String {
+fn render_markdown(hits: &[Hit], mode: DisplayMode) -> String {
     let mut out = String::new();
     for (i, h) in hits.iter().enumerate() {
         let badge = subagent_badge(h, true);
@@ -88,25 +108,30 @@ fn render_markdown(hits: &[Hit], raw: bool) -> String {
             badge
         );
         if let Some(q) = &h.question {
-            let _ = writeln!(out, "**Q:** {}", snip(q, 320, raw));
+            let _ = writeln!(out, "**Q:** {}", fmt_prose(q, 320, mode));
         }
         if let Some(cmd) = &h.command {
-            let _ = writeln!(out, "```bash\n{}\n```", snip(cmd, 800, raw));
+            let _ = writeln!(out, "```bash\n{}\n```", fmt_literal(cmd, 800, mode));
         }
         if let Some(stdout) = &h.stdout {
-            let _ = writeln!(out, "```\n{}\n```", snip(stdout, 800, raw));
+            let _ = writeln!(out, "```\n{}\n```", fmt_literal(stdout, 800, mode));
         }
         if let Some(summary) = &h.summary
             && h.command.is_none()
         {
-            let _ = writeln!(out, "> {}", snip(summary, 600, raw));
+            let _ = writeln!(out, "> {}", fmt_prose(summary, 600, mode));
         }
         out.push('\n');
     }
     out
 }
 
-pub fn render_prompts(hits: &[PromptHit], format: OutputFormat, color: bool) -> Result<String> {
+pub fn render_prompts(
+    hits: &[PromptHit],
+    format: OutputFormat,
+    color: bool,
+    mode: DisplayMode,
+) -> Result<String> {
     if hits.is_empty() {
         return Ok(match format {
             OutputFormat::Json => "[]\n".to_string(),
@@ -115,12 +140,12 @@ pub fn render_prompts(hits: &[PromptHit], format: OutputFormat, color: bool) -> 
     }
     match format {
         OutputFormat::Json => Ok(serde_json::to_string_pretty(hits)? + "\n"),
-        OutputFormat::Md => Ok(render_prompts_md(hits)),
-        OutputFormat::Text => Ok(render_prompts_text(hits, color)),
+        OutputFormat::Md => Ok(render_prompts_md(hits, mode)),
+        OutputFormat::Text => Ok(render_prompts_text(hits, color, mode)),
     }
 }
 
-fn render_prompts_text(hits: &[PromptHit], color: bool) -> String {
+fn render_prompts_text(hits: &[PromptHit], color: bool, mode: DisplayMode) -> String {
     let mut out = String::new();
     for (i, h) in hits.iter().enumerate() {
         let extra = if h.pasted_chars > 0 {
@@ -146,13 +171,13 @@ fn render_prompts_text(hits: &[PromptHit], color: bool) -> String {
         } else {
             "Q:".to_string()
         };
-        let _ = writeln!(out, "  {} {}", label, snip(&h.prompt_text, 320, false));
+        let _ = writeln!(out, "  {} {}", label, fmt_prose(&h.prompt_text, 320, mode));
         out.push('\n');
     }
     out
 }
 
-fn render_prompts_md(hits: &[PromptHit]) -> String {
+fn render_prompts_md(hits: &[PromptHit], mode: DisplayMode) -> String {
     let mut out = String::new();
     for (i, h) in hits.iter().enumerate() {
         let _ = writeln!(
@@ -162,7 +187,7 @@ fn render_prompts_md(hits: &[PromptHit]) -> String {
             fmt_ts(h.ts),
             h.project_path
         );
-        let _ = writeln!(out, "**Q:** {}", snip(&h.prompt_text, 800, false));
+        let _ = writeln!(out, "**Q:** {}", fmt_prose(&h.prompt_text, 800, mode));
         out.push('\n');
     }
     out

@@ -6,7 +6,15 @@ use crate::cli::{AskArgs, AskedArgs};
 use crate::config::Paths;
 use crate::format::{render_command_only, render_hits, render_prompts};
 use crate::store::Store;
-use crate::util::{atty_stdout, since_seconds};
+use crate::util::{DisplayMode, atty_stdout, since_seconds};
+
+fn display_mode(full: bool, raw: bool) -> DisplayMode {
+    match (raw, full) {
+        (true, _) => DisplayMode::Raw,
+        (false, true) => DisplayMode::Full,
+        (false, false) => DisplayMode::Compact,
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Hit {
@@ -173,7 +181,8 @@ pub fn run(args: AskArgs) -> Result<()> {
         }
     } else {
         let color = !args.no_color && atty_stdout();
-        let out = render_hits(&hits, args.format, color, args.raw)?;
+        let mode = display_mode(args.full, args.raw);
+        let out = render_hits(&hits, args.format, color, mode)?;
         print!("{}", out);
         Ok(())
     }
@@ -254,7 +263,8 @@ pub fn run_asked(args: AskedArgs) -> Result<()> {
         args.project.as_deref(),
     )?;
     let color = !args.no_color && atty_stdout();
-    let out = render_prompts(&hits, args.format, color)?;
+    let mode = display_mode(args.full, args.raw);
+    let out = render_prompts(&hits, args.format, color, mode)?;
     print!("{}", out);
     Ok(())
 }

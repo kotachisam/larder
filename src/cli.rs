@@ -54,6 +54,8 @@ pub struct AskArgs {
     pub format: OutputFormat,
     #[arg(long)]
     pub cmd_only: bool,
+    #[arg(long, conflicts_with = "raw")]
+    pub full: bool,
     #[arg(long)]
     pub raw: bool,
     #[arg(long)]
@@ -73,6 +75,10 @@ pub struct AskedArgs {
     pub project: Option<String>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
+    #[arg(long, conflicts_with = "raw")]
+    pub full: bool,
+    #[arg(long)]
+    pub raw: bool,
     #[arg(long)]
     pub no_color: bool,
 }

@@ -5,7 +5,7 @@ use serde::Serialize;
 use crate::cli::{DigestArgs, OutputFormat};
 use crate::config::Paths;
 use crate::store::Store;
-use crate::util::{fmt_ts, since_seconds, snip};
+use crate::util::{clean_for_display, fmt_ts, since_seconds, snip};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DigestEntry {
@@ -94,7 +94,7 @@ fn render_text(entries: &[DigestEntry]) -> String {
             "{:>2}. ×{:<4} {}  ({})",
             i + 1,
             e.count,
-            snip(&e.question, 80, false),
+            snip(&clean_for_display(&e.question), 80, false),
             fmt_ts(e.last_seen)
         );
         if let Some(cmd) = &e.example_command {
@@ -116,7 +116,7 @@ fn render_md(entries: &[DigestEntry]) -> String {
             i + 1,
             e.count,
             fmt_ts(e.last_seen),
-            snip(&e.question, 120, false).replace('|', "\\|")
+            snip(&clean_for_display(&e.question), 120, false).replace('|', "\\|")
         );
     }
     out
