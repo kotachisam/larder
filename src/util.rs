@@ -24,7 +24,39 @@ pub fn clean_for_display(s: &str) -> String {
     }
     out = compress_marker(&out, "[Pasted text #", "]", "[paste]");
     out = compress_marker(&out, "[Image #", "]", "[image]");
+    out = collapse_cc_paste_blocks(&out);
     out.trim().to_string()
+}
+
+fn line_is_cc_marker(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with('⏺') || trimmed.starts_with('⎿') || trimmed.starts_with('❯')
+}
+
+fn line_is_indented_or_blank(line: &str) -> bool {
+    line.trim().is_empty() || line.starts_with(' ') || line.starts_with('\t')
+}
+
+fn collapse_cc_paste_blocks(s: &str) -> String {
+    let lines: Vec<&str> = s.split('\n').collect();
+    let mut out_lines: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if line_is_cc_marker(lines[i]) {
+            let mut j = i + 1;
+            while j < lines.len()
+                && (line_is_cc_marker(lines[j]) || line_is_indented_or_blank(lines[j]))
+            {
+                j += 1;
+            }
+            out_lines.push("[paste]".to_string());
+            i = j;
+        } else {
+            out_lines.push(lines[i].to_string());
+            i += 1;
+        }
+    }
+    out_lines.join("\n")
 }
 
 fn strip_xml_block(s: &str, tag: &str) -> String {
@@ -233,5 +265,57 @@ mod tests {
     fn clean_real_world_zkp_example() {
         let s = "[Pasted text #43 +35 lines] here's the ZKP questions";
         assert_eq!(clean_for_display(s), "[paste] here's the ZKP questions");
+    }
+
+    #[test]
+    fn cc_paste_at_line_start_collapses() {
+        let s = "⏺ assistant said this\n  continuation line\n⎿ tool output";
+        assert_eq!(clean_for_display(s), "[paste]");
+    }
+
+    #[test]
+    fn cc_paste_with_wrapping_prose_keeps_prose() {
+        let s = "Here is what I tried:\n⏺ assistant blah\n⎿ output\nWhat went wrong?";
+        let out = clean_for_display(s);
+        assert!(out.contains("Here is what I tried:"));
+        assert!(out.contains("[paste]"));
+        assert!(out.contains("What went wrong?"));
+        assert!(!out.contains('⏺'));
+        assert!(!out.contains('⎿'));
+    }
+
+    #[test]
+    fn cc_glyph_in_middle_of_prose_is_not_collapsed() {
+        let s = "I noticed the ⏺ glyph appears in CC prompt prefixes";
+        assert_eq!(
+            clean_for_display(s),
+            "I noticed the ⏺ glyph appears in CC prompt prefixes"
+        );
+    }
+
+    #[test]
+    fn multiple_cc_blocks_each_collapse() {
+        let s = "first thing\n⏺ paste one\nmiddle prose\n❯ paste two\nfinal thought";
+        let out = clean_for_display(s);
+        assert!(out.contains("first thing"));
+        assert!(out.contains("middle prose"));
+        assert!(out.contains("final thought"));
+        assert_eq!(out.matches("[paste]").count(), 2);
+    }
+
+    #[test]
+    fn cc_block_includes_indented_continuations() {
+        let s = "⏺ Bash(docker images)\n  ⎿  REPOSITORY  TAG  ID\n     postgres   latest  abc\n     mongo      latest  def\nWhat are these?";
+        let out = clean_for_display(s);
+        assert!(out.contains("[paste]"));
+        assert!(out.contains("What are these?"));
+        assert!(!out.contains("postgres"));
+        assert!(!out.contains("REPOSITORY"));
+    }
+
+    #[test]
+    fn pure_prose_unaffected_by_cc_collapser() {
+        let s = "Just a normal question with no harness gunk at all.";
+        assert_eq!(clean_for_display(s), s);
     }
 }
