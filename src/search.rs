@@ -34,7 +34,16 @@ pub struct Hit {
     pub subagent_description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_matches: Option<usize>,
+    #[serde(skip_serializing_if = "is_zero")]
+    #[serde(default)]
+    pub more_in_session: usize,
 }
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+const SESSION_DEDUPE_OVERSAMPLE: usize = 5;
 
 pub fn search(
     store: &Store,
@@ -49,6 +58,7 @@ pub fn search(
     } else {
         ""
     };
+    let oversample = (limit * SESSION_DEDUPE_OVERSAMPLE) as i64;
     let sql = format!(
         r#"
         SELECT
@@ -65,7 +75,7 @@ pub fn search(
         "#
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![fts_query, limit as i64], |r| {
+    let rows = stmt.query_map(params![fts_query, oversample], |r| {
         Ok(Hit {
             id: r.get(0)?,
             session_id: r.get(1)?,
@@ -82,13 +92,33 @@ pub fn search(
             parent_session_id: r.get(12)?,
             subagent_description: r.get(13)?,
             raw_matches: None,
+            more_in_session: 0,
         })
     })?;
-    let mut out = Vec::new();
+    let mut all = Vec::new();
     for row in rows {
-        out.push(row?);
+        all.push(row?);
     }
-    Ok(out)
+    Ok(dedupe_by_session(all, limit))
+}
+
+fn dedupe_by_session(hits: Vec<Hit>, limit: usize) -> Vec<Hit> {
+    use std::collections::HashMap;
+    let mut first_index: HashMap<String, usize> = HashMap::new();
+    let mut deduped: Vec<Hit> = Vec::new();
+    for hit in hits {
+        match first_index.get(&hit.session_id).copied() {
+            Some(idx) => {
+                deduped[idx].more_in_session += 1;
+            }
+            None => {
+                first_index.insert(hit.session_id.clone(), deduped.len());
+                deduped.push(hit);
+            }
+        }
+    }
+    deduped.truncate(limit);
+    deduped
 }
 
 pub fn hits_by_entry_ids(store: &Store, entry_ids: &[i64]) -> Result<Vec<Hit>> {
@@ -134,6 +164,7 @@ pub fn hits_by_entry_ids(store: &Store, entry_ids: &[i64]) -> Result<Vec<Hit>> {
             parent_session_id: r.get(12)?,
             subagent_description: r.get(13)?,
             raw_matches: None,
+            more_in_session: 0,
         })
     })?;
     let mut out = Vec::new();
@@ -267,4 +298,82 @@ pub fn run_asked(args: AskedArgs) -> Result<()> {
     let out = render_prompts(&hits, args.format, color, mode)?;
     print!("{}", out);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hit(session_id: &str, score: f64) -> Hit {
+        Hit {
+            id: 0,
+            session_id: session_id.to_string(),
+            ts: 0,
+            project_path: "/p".to_string(),
+            kind: "qa".to_string(),
+            question: None,
+            command: None,
+            stdout: None,
+            stderr: None,
+            summary: None,
+            score,
+            is_subagent: false,
+            parent_session_id: None,
+            subagent_description: None,
+            raw_matches: None,
+            more_in_session: 0,
+        }
+    }
+
+    #[test]
+    fn dedupe_collapses_same_session_with_count() {
+        let hits = vec![
+            hit("a", -5.0),
+            hit("a", -4.5),
+            hit("a", -4.0),
+            hit("b", -3.0),
+        ];
+        let out = dedupe_by_session(hits, 10);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].session_id, "a");
+        assert_eq!(out[0].more_in_session, 2);
+        assert_eq!(out[1].session_id, "b");
+        assert_eq!(out[1].more_in_session, 0);
+    }
+
+    #[test]
+    fn dedupe_preserves_order_by_first_appearance() {
+        let hits = vec![hit("z", -10.0), hit("a", -9.0), hit("z", -1.0)];
+        let out = dedupe_by_session(hits, 10);
+        assert_eq!(out[0].session_id, "z");
+        assert_eq!(out[1].session_id, "a");
+    }
+
+    #[test]
+    fn dedupe_truncates_to_limit() {
+        let hits = vec![
+            hit("a", -5.0),
+            hit("b", -4.0),
+            hit("c", -3.0),
+            hit("d", -2.0),
+        ];
+        let out = dedupe_by_session(hits, 2);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].session_id, "a");
+        assert_eq!(out[1].session_id, "b");
+    }
+
+    #[test]
+    fn dedupe_handles_empty_input() {
+        let out = dedupe_by_session(Vec::new(), 5);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn dedupe_keeps_first_hits_score() {
+        let hits = vec![hit("a", -10.0), hit("a", -5.0)];
+        let out = dedupe_by_session(hits, 5);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].score, -10.0);
+    }
 }

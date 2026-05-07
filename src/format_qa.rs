@@ -49,17 +49,17 @@ fn render_text(hits: &[Hit], color: bool, mode: DisplayMode) -> String {
     let mut out = String::new();
     for (i, h) in hits.iter().enumerate() {
         let badge = subagent_badge(h, false);
-        let score_or_hits = match h.raw_matches {
-            Some(n) => format!("{} raw matches", n),
-            None => format!("score {:.2}", h.score),
+        let trailing = match h.raw_matches {
+            Some(n) => format!(" · {} raw matches", n),
+            None => String::new(),
         };
         let header = format!(
-            "[{}] {} · {}{} · {}",
+            "[{}] {} · {}{}{}",
             i + 1,
             fmt_ts(h.ts),
             h.project_path,
             badge,
-            score_or_hits
+            trailing,
         );
         if color {
             let _ = writeln!(out, "{}", header.bold());
@@ -89,6 +89,18 @@ fn render_text(hits: &[Hit], color: bool, mode: DisplayMode) -> String {
             && h.command.is_none()
         {
             let _ = writeln!(out, "  > {}", fmt_prose(summary, 280, mode));
+        }
+        if h.more_in_session > 0 {
+            let _ = writeln!(
+                out,
+                "  +{} more {} in this session",
+                h.more_in_session,
+                if h.more_in_session == 1 {
+                    "match"
+                } else {
+                    "matches"
+                }
+            );
         }
         out.push('\n');
     }
@@ -120,6 +132,18 @@ fn render_markdown(hits: &[Hit], mode: DisplayMode) -> String {
             && h.command.is_none()
         {
             let _ = writeln!(out, "> {}", fmt_prose(summary, 600, mode));
+        }
+        if h.more_in_session > 0 {
+            let _ = writeln!(
+                out,
+                "_+{} more {} in this session_",
+                h.more_in_session,
+                if h.more_in_session == 1 {
+                    "match"
+                } else {
+                    "matches"
+                }
+            );
         }
         out.push('\n');
     }
@@ -154,12 +178,11 @@ fn render_prompts_text(hits: &[PromptHit], color: bool, mode: DisplayMode) -> St
             String::new()
         };
         let header = format!(
-            "[{}] {} · {} [history]{} · score {:.2}",
+            "[{}] {} · {} [history]{}",
             i + 1,
             fmt_ts(h.ts),
             h.project_path,
             extra,
-            h.score
         );
         let _ = if color {
             writeln!(out, "{}", header.bold())

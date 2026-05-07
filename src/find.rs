@@ -146,8 +146,14 @@ fn raw_grep_per_project(
 }
 
 fn filesystem_find(query: &str) -> Result<Vec<PathBuf>> {
-    let needle = query.to_lowercase();
-    let needle = needle.replace(' ', "-");
+    let q_lower = query.to_lowercase();
+    let q_tokens: Vec<&str> = q_lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if q_tokens.is_empty() {
+        return Ok(Vec::new());
+    }
     let home = match directories::BaseDirs::new() {
         Some(b) => b.home_dir().to_path_buf(),
         None => return Ok(Vec::new()),
@@ -171,7 +177,7 @@ fn filesystem_find(query: &str) -> Result<Vec<PathBuf>> {
                 continue;
             }
             let name_lower = entry.file_name().to_string_lossy().to_lowercase();
-            if name_lower.contains(&needle) {
+            if filename_matches_tokens(&name_lower, &q_tokens) {
                 results.push(entry.path().to_path_buf());
                 if results.len() >= FS_MAX_HITS {
                     return Ok(results);
@@ -180,6 +186,16 @@ fn filesystem_find(query: &str) -> Result<Vec<PathBuf>> {
         }
     }
     Ok(results)
+}
+
+fn filename_matches_tokens(filename_lower: &str, query_tokens: &[&str]) -> bool {
+    let file_tokens: Vec<&str> = filename_lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect();
+    query_tokens
+        .iter()
+        .all(|qt| file_tokens.iter().any(|ft| ft == qt))
 }
 
 fn render(
@@ -212,18 +228,29 @@ fn render(
             let badge = if h.is_subagent { " [subagent]" } else { "" };
             let _ = writeln!(
                 out,
-                "  [{}] {} · {}{} · score {:.2}",
+                "  [{}] {} · {}{}",
                 i + 1,
                 fmt_ts(h.ts),
                 h.project_path,
                 badge,
-                h.score
             );
             if let Some(q) = &h.question {
                 let _ = writeln!(out, "      Q: {}", snip(&clean_for_display(q), 200, false));
             }
             if let Some(a) = &h.summary {
                 let _ = writeln!(out, "      > {}", snip(&clean_for_display(a), 220, false));
+            }
+            if h.more_in_session > 0 {
+                let _ = writeln!(
+                    out,
+                    "      +{} more {} in this session",
+                    h.more_in_session,
+                    if h.more_in_session == 1 {
+                        "match"
+                    } else {
+                        "matches"
+                    }
+                );
             }
         }
     }
@@ -263,11 +290,10 @@ fn render(
         for (i, p) in prompts.iter().take(limit).enumerate() {
             let _ = writeln!(
                 out,
-                "  [{}] {} · {} [history] · score {:.2}",
+                "  [{}] {} · {} [history]",
                 i + 1,
                 fmt_ts(p.ts),
                 p.project_path,
-                p.score
             );
             let _ = writeln!(
                 out,
@@ -308,4 +334,58 @@ fn section_header(out: &mut String, title: &str, color: bool) {
     } else {
         writeln!(out, "{}", line)
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tokens(q: &str) -> Vec<&str> {
+        q.split(|c: char| !c.is_alphanumeric())
+            .filter(|t| !t.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn aws_does_not_match_jaws() {
+        let q = tokens("aws");
+        assert!(!filename_matches_tokens("sp-jaws-outdoor.webp", &q));
+        assert!(!filename_matches_tokens("australia-uranium-laws.md", &q));
+        assert!(!filename_matches_tokens(
+            "class-action-lawsuit-advice.md",
+            &q
+        ));
+    }
+
+    #[test]
+    fn aws_matches_aws_named_files() {
+        let q = tokens("aws");
+        assert!(filename_matches_tokens("aws-deploy.sh", &q));
+        assert!(filename_matches_tokens("setup_aws_keys.md", &q));
+        assert!(filename_matches_tokens("aws.config", &q));
+    }
+
+    #[test]
+    fn multi_token_query_requires_all_tokens() {
+        let q = tokens("new feature");
+        assert!(filename_matches_tokens("new-feature.md", &q));
+        assert!(filename_matches_tokens("new_feature_proposal.md", &q));
+        assert!(!filename_matches_tokens("new-readme.md", &q));
+        assert!(!filename_matches_tokens("feature-flag.ts", &q));
+    }
+
+    #[test]
+    fn case_insensitive_match() {
+        let q = tokens("aws");
+        assert!(filename_matches_tokens(
+            "aws-config.md".to_lowercase().as_str(),
+            &q
+        ));
+    }
+
+    #[test]
+    fn empty_query_returns_no_results() {
+        assert!(filesystem_find("").unwrap().is_empty());
+        assert!(filesystem_find("   ").unwrap().is_empty());
+    }
 }
