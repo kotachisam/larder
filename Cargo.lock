@@ -881,6 +881,7 @@ dependencies = [
  "directories",
  "futures",
  "humantime",
+ "libc",
  "owo-colors",
  "reqwest",
  "rusqlite",

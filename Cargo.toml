@@ -19,6 +19,7 @@ clap = { version = "4", features = ["derive"] }
 directories = "6"
 futures = "0.3"
 humantime = "2"
+libc = "0.2.186"
 owo-colors = "4"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
