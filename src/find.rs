@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 use std::fmt::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use owo_colors::OwoColorize;
 use serde_json::Value;
 use walkdir::WalkDir;
@@ -13,6 +12,7 @@ use crate::cli::FindArgs;
 use crate::config::Paths;
 use crate::search::{Hit, PromptHit, search, search_prompts};
 use crate::store::Store;
+use crate::util::{atty_stdout, fmt_ts, since_seconds, snip};
 
 const FS_SCAN_PATHS: &[&str] = &["Developer", "Documents", ".claude/projects"];
 const FS_SKIP_DIRS: &[&str] = &[
@@ -234,10 +234,10 @@ fn render(
                 h.score
             );
             if let Some(q) = &h.question {
-                let _ = writeln!(out, "      Q: {}", snip(q, 200));
+                let _ = writeln!(out, "      Q: {}", snip(q, 200, false));
             }
             if let Some(a) = &h.summary {
-                let _ = writeln!(out, "      > {}", snip(a, 220));
+                let _ = writeln!(out, "      > {}", snip(a, 220, false));
             }
         }
     }
@@ -283,7 +283,7 @@ fn render(
                 p.project_path,
                 p.score
             );
-            let _ = writeln!(out, "      Q: {}", snip(&p.prompt_text, 220));
+            let _ = writeln!(out, "      Q: {}", snip(&p.prompt_text, 220, false));
         }
     }
     out.push('\n');
@@ -319,44 +319,3 @@ fn section_header(out: &mut String, title: &str, color: bool) {
         writeln!(out, "{}", line)
     };
 }
-
-fn fmt_ts(ts: i64) -> String {
-    if ts == 0 {
-        return "?".to_string();
-    }
-    DateTime::<Utc>::from_timestamp(ts, 0)
-        .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
-        .unwrap_or_else(|| "?".to_string())
-}
-
-fn snip(s: &str, max: usize) -> String {
-    let one_line = s
-        .replace('\n', " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    if one_line.len() <= max {
-        return one_line;
-    }
-    let mut end = max;
-    while !one_line.is_char_boundary(end) && end > 0 {
-        end -= 1;
-    }
-    format!("{}…", &one_line[..end])
-}
-
-fn since_seconds(spec: Option<&str>) -> Result<i64> {
-    let Some(s) = spec else { return Ok(0) };
-    let now = Utc::now().timestamp();
-    let dur = humantime::parse_duration(s)
-        .map_err(|e| anyhow::anyhow!("invalid --since '{}': {}", s, e))?;
-    Ok(now - dur.as_secs() as i64)
-}
-
-fn atty_stdout() -> bool {
-    use std::io::IsTerminal;
-    std::io::stdout().is_terminal()
-}
-
-#[allow(dead_code)]
-fn _unused(_: &Path) {}

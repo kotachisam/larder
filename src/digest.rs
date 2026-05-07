@@ -1,11 +1,11 @@
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use rusqlite::params;
 use serde::Serialize;
 
 use crate::cli::{DigestArgs, OutputFormat};
 use crate::config::Paths;
 use crate::store::Store;
+use crate::util::{fmt_ts, since_seconds, snip};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DigestEntry {
@@ -71,16 +71,6 @@ pub fn run(args: DigestArgs) -> Result<()> {
     Ok(())
 }
 
-fn since_seconds(spec: Option<&str>) -> Result<i64> {
-    let now = Utc::now().timestamp();
-    let Some(s) = spec else {
-        return Ok(0);
-    };
-    let dur = humantime::parse_duration(s)
-        .map_err(|e| anyhow::anyhow!("invalid --since '{}': {}", s, e))?;
-    Ok(now - dur.as_secs() as i64)
-}
-
 fn render_digest(entries: &[DigestEntry], format: OutputFormat) -> String {
     if entries.is_empty() {
         return match format {
@@ -104,11 +94,11 @@ fn render_text(entries: &[DigestEntry]) -> String {
             "{:>2}. ×{:<4} {}  ({})",
             i + 1,
             e.count,
-            truncate(&e.question, 80),
+            snip(&e.question, 80, false),
             fmt_ts(e.last_seen)
         );
         if let Some(cmd) = &e.example_command {
-            let _ = writeln!(out, "      $ {}", truncate(cmd, 120));
+            let _ = writeln!(out, "      $ {}", snip(cmd, 120, false));
         }
     }
     out
@@ -126,30 +116,9 @@ fn render_md(entries: &[DigestEntry]) -> String {
             i + 1,
             e.count,
             fmt_ts(e.last_seen),
-            truncate(&e.question, 120).replace('|', "\\|")
+            snip(&e.question, 120, false).replace('|', "\\|")
         );
     }
     out
 }
 
-fn fmt_ts(ts: i64) -> String {
-    DateTime::<Utc>::from_timestamp(ts, 0)
-        .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
-        .unwrap_or_else(|| "?".to_string())
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    let one_line = s
-        .replace('\n', " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    if one_line.len() <= max {
-        return one_line;
-    }
-    let mut end = max;
-    while !one_line.is_char_boundary(end) && end > 0 {
-        end -= 1;
-    }
-    format!("{}…", &one_line[..end])
-}

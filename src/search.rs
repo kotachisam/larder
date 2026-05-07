@@ -6,6 +6,7 @@ use crate::cli::{AskArgs, AskedArgs};
 use crate::config::Paths;
 use crate::format::{render_command_only, render_hits, render_prompts};
 use crate::store::Store;
+use crate::util::{atty_stdout, since_seconds};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Hit {
@@ -178,11 +179,6 @@ pub fn run(args: AskArgs) -> Result<()> {
     }
 }
 
-fn atty_stdout() -> bool {
-    use std::io::IsTerminal;
-    std::io::stdout().is_terminal()
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct PromptHit {
     pub id: i64,
@@ -263,13 +259,3 @@ pub fn run_asked(args: AskedArgs) -> Result<()> {
     Ok(())
 }
 
-fn since_seconds(spec: Option<&str>) -> Result<i64> {
-    use chrono::Utc;
-    let Some(s) = spec else {
-        return Ok(0);
-    };
-    let now = Utc::now().timestamp();
-    let dur = humantime::parse_duration(s)
-        .map_err(|e| anyhow::anyhow!("invalid --since '{}': {}", s, e))?;
-    Ok(now - dur.as_secs() as i64)
-}

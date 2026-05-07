@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-use chrono::{DateTime, Utc};
 use owo_colors::OwoColorize;
 use serde_json::Value;
 
@@ -12,6 +11,7 @@ use crate::cli::GrepArgs;
 use crate::config::Paths;
 use crate::search::{Hit, hits_by_entry_ids};
 use crate::store::Store;
+use crate::util::{atty_stdout, fmt_ts, since_seconds, snip};
 
 pub fn run(args: GrepArgs) -> Result<()> {
     let paths = Paths::resolve()?;
@@ -207,7 +207,7 @@ fn render_groups(groups: &[GrepGroup], color: bool) -> String {
             } else {
                 "Q:".to_string()
             };
-            let _ = writeln!(out, "  {} {}", label, snip(q, 240));
+            let _ = writeln!(out, "  {} {}", label, snip(q, 240, false));
         }
         if let Some(a) = &g.answer_summary {
             let label = if color {
@@ -215,7 +215,7 @@ fn render_groups(groups: &[GrepGroup], color: bool) -> String {
             } else {
                 ">".to_string()
             };
-            let _ = writeln!(out, "  {} {}", label, snip(a, 320));
+            let _ = writeln!(out, "  {} {}", label, snip(a, 320, false));
         }
         for cmd in &g.commands {
             let prompt = if color {
@@ -236,11 +236,11 @@ fn render_groups(groups: &[GrepGroup], color: bool) -> String {
                 out,
                 "  {} {}{}",
                 prompt,
-                snip(&cmd.command, 280),
+                snip(&cmd.command, 280, false),
                 count_marker
             );
             if let Some(stdout) = &cmd.stdout {
-                let _ = writeln!(out, "    ↳ {}", snip(stdout, 200));
+                let _ = writeln!(out, "    ↳ {}", snip(stdout, 200, false));
             }
         }
         out.push('\n');
@@ -257,31 +257,9 @@ fn subagent_badge(g: &GrepGroup) -> String {
         return String::new();
     }
     match g.subagent_description.as_deref() {
-        Some(d) if !d.is_empty() => format!(" [subagent: \"{}\"]", snip(d, 60)),
+        Some(d) if !d.is_empty() => format!(" [subagent: \"{}\"]", snip(d, 60, false)),
         _ => " [subagent]".to_string(),
     }
-}
-
-fn fmt_ts(ts: i64) -> String {
-    DateTime::<Utc>::from_timestamp(ts, 0)
-        .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
-        .unwrap_or_else(|| "?".to_string())
-}
-
-fn snip(s: &str, max: usize) -> String {
-    let one_line = s
-        .replace('\n', " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    if one_line.len() <= max {
-        return one_line;
-    }
-    let mut end = max;
-    while !one_line.is_char_boundary(end) && end > 0 {
-        end -= 1;
-    }
-    format!("{}…", &one_line[..end])
 }
 
 #[derive(Debug)]
@@ -346,17 +324,3 @@ fn collect_files_from_disk(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(transcripts.into_iter().map(|tp| tp.source_path).collect())
 }
 
-fn since_seconds(spec: Option<&str>) -> Result<i64> {
-    let now = Utc::now().timestamp();
-    let Some(s) = spec else {
-        return Ok(0);
-    };
-    let dur = humantime::parse_duration(s)
-        .map_err(|e| anyhow::anyhow!("invalid --since '{}': {}", s, e))?;
-    Ok(now - dur.as_secs() as i64)
-}
-
-fn atty_stdout() -> bool {
-    use std::io::IsTerminal;
-    std::io::stdout().is_terminal()
-}

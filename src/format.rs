@@ -1,11 +1,11 @@
 use std::fmt::Write;
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use owo_colors::OwoColorize;
 
 use crate::cli::OutputFormat;
 use crate::search::{Hit, PromptHit};
+use crate::util::{fmt_ts, snip};
 
 pub fn render_hits(hits: &[Hit], format: OutputFormat, color: bool, raw: bool) -> Result<String> {
     if hits.is_empty() {
@@ -52,7 +52,7 @@ fn render_text(hits: &[Hit], color: bool, raw: bool) -> String {
             } else {
                 "Q:".to_string()
             };
-            let _ = writeln!(out, "  {} {}", label, snip(q, raw, 240));
+            let _ = writeln!(out, "  {} {}", label, snip(q, 240, raw));
         }
         if let Some(cmd) = &h.command {
             let label = if color {
@@ -60,15 +60,15 @@ fn render_text(hits: &[Hit], color: bool, raw: bool) -> String {
             } else {
                 "$".to_string()
             };
-            let _ = writeln!(out, "  {} {}", label, snip(cmd, raw, 320));
+            let _ = writeln!(out, "  {} {}", label, snip(cmd, 320, raw));
         }
         if let Some(stdout) = &h.stdout {
-            let _ = writeln!(out, "  ↳ {}", snip(stdout, raw, 240));
+            let _ = writeln!(out, "  ↳ {}", snip(stdout, 240, raw));
         }
         if let Some(summary) = &h.summary
             && h.command.is_none()
         {
-            let _ = writeln!(out, "  > {}", snip(summary, raw, 280));
+            let _ = writeln!(out, "  > {}", snip(summary, 280, raw));
         }
         out.push('\n');
     }
@@ -88,18 +88,18 @@ fn render_markdown(hits: &[Hit], raw: bool) -> String {
             badge
         );
         if let Some(q) = &h.question {
-            let _ = writeln!(out, "**Q:** {}", snip(q, raw, 320));
+            let _ = writeln!(out, "**Q:** {}", snip(q, 320, raw));
         }
         if let Some(cmd) = &h.command {
-            let _ = writeln!(out, "```bash\n{}\n```", snip(cmd, raw, 800));
+            let _ = writeln!(out, "```bash\n{}\n```", snip(cmd, 800, raw));
         }
         if let Some(stdout) = &h.stdout {
-            let _ = writeln!(out, "```\n{}\n```", snip(stdout, raw, 800));
+            let _ = writeln!(out, "```\n{}\n```", snip(stdout, 800, raw));
         }
         if let Some(summary) = &h.summary
             && h.command.is_none()
         {
-            let _ = writeln!(out, "> {}", snip(summary, raw, 600));
+            let _ = writeln!(out, "> {}", snip(summary, 600, raw));
         }
         out.push('\n');
     }
@@ -146,7 +146,7 @@ fn render_prompts_text(hits: &[PromptHit], color: bool) -> String {
         } else {
             "Q:".to_string()
         };
-        let _ = writeln!(out, "  {} {}", label, snip(&h.prompt_text, false, 320));
+        let _ = writeln!(out, "  {} {}", label, snip(&h.prompt_text, 320, false));
         out.push('\n');
     }
     out
@@ -162,7 +162,7 @@ fn render_prompts_md(hits: &[PromptHit]) -> String {
             fmt_ts(h.ts),
             h.project_path
         );
-        let _ = writeln!(out, "**Q:** {}", snip(&h.prompt_text, false, 800));
+        let _ = writeln!(out, "**Q:** {}", snip(&h.prompt_text, 800, false));
         out.push('\n');
     }
     out
@@ -173,7 +173,7 @@ fn subagent_badge(h: &Hit, italic: bool) -> String {
         return String::new();
     }
     let label = match h.subagent_description.as_deref() {
-        Some(d) if !d.is_empty() => format!("subagent: \"{}\"", snip(d, false, 60)),
+        Some(d) if !d.is_empty() => format!("subagent: \"{}\"", snip(d, 60, false)),
         _ => "subagent".to_string(),
     };
     if italic {
@@ -183,28 +183,3 @@ fn subagent_badge(h: &Hit, italic: bool) -> String {
     }
 }
 
-fn fmt_ts(ts: i64) -> String {
-    DateTime::<Utc>::from_timestamp(ts, 0)
-        .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
-        .unwrap_or_else(|| "?".to_string())
-}
-
-fn snip(s: &str, raw: bool, max: usize) -> String {
-    let collapsed = if raw {
-        s.to_string()
-    } else {
-        s.replace('\n', " ")
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-    };
-    if collapsed.len() <= max {
-        collapsed
-    } else {
-        let mut end = max;
-        while !collapsed.is_char_boundary(end) && end > 0 {
-            end -= 1;
-        }
-        format!("{}…", &collapsed[..end])
-    }
-}

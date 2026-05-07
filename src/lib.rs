@@ -12,6 +12,7 @@ pub mod proxy;
 pub mod search;
 pub mod store;
 pub mod transcript;
+pub mod util;
 pub mod watch;
 
 use anyhow::Result;
