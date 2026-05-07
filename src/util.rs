@@ -28,13 +28,54 @@ pub fn clean_for_display(s: &str) -> String {
     out.trim().to_string()
 }
 
+// Glyphs that, when they're the first non-whitespace char on a line,
+// indicate Claude Code TUI output. Add to this list as new TUI markers
+// surface in real-world pastes — keep one entry per glyph with a comment
+// noting where it appears in the TUI.
+const CC_LINE_START_GLYPHS: &[char] = &[
+    '⏺', // assistant message marker
+    '⎿', // tool-output continuation
+    '❯', // user prompt prefix
+    '⏵', // accept-edits prompt mode (often `⏵⏵`)
+    '✢', // "Quantumizing…" / thinking spinner variant
+    '✻', // "Cogitated for…" / thinking spinner variant
+    '🟔', // status spinner variant
+    '⏶', // scroll/control indicator
+    '⏷', // scroll/control indicator
+];
+
+// Box-drawing chars used by the TUI for separators between content blocks.
+// A line that's mostly these (after trim) is treated as a separator.
+const CC_SEPARATOR_CHARS: &[char] = &['═', '─', '━', '│', '┃', '╌', '╍'];
+
 fn line_is_cc_marker(line: &str) -> bool {
     let trimmed = line.trim_start();
-    trimmed.starts_with('⏺') || trimmed.starts_with('⎿') || trimmed.starts_with('❯')
+    let Some(first) = trimmed.chars().next() else {
+        return false;
+    };
+    CC_LINE_START_GLYPHS.contains(&first)
+}
+
+fn line_is_cc_separator(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let total: usize = trimmed.chars().count();
+    let separator_count: usize = trimmed
+        .chars()
+        .filter(|c| CC_SEPARATOR_CHARS.contains(c))
+        .count();
+    // Require at least 4 separator chars and >50% of the line.
+    separator_count >= 4 && separator_count * 2 > total
 }
 
 fn line_is_indented_or_blank(line: &str) -> bool {
     line.trim().is_empty() || line.starts_with(' ') || line.starts_with('\t')
+}
+
+fn line_extends_cc_block(line: &str) -> bool {
+    line_is_cc_marker(line) || line_is_cc_separator(line) || line_is_indented_or_blank(line)
 }
 
 fn collapse_cc_paste_blocks(s: &str) -> String {
@@ -42,11 +83,9 @@ fn collapse_cc_paste_blocks(s: &str) -> String {
     let mut out_lines: Vec<String> = Vec::new();
     let mut i = 0;
     while i < lines.len() {
-        if line_is_cc_marker(lines[i]) {
+        if line_is_cc_marker(lines[i]) || line_is_cc_separator(lines[i]) {
             let mut j = i + 1;
-            while j < lines.len()
-                && (line_is_cc_marker(lines[j]) || line_is_indented_or_blank(lines[j]))
-            {
+            while j < lines.len() && line_extends_cc_block(lines[j]) {
                 j += 1;
             }
             out_lines.push("[paste]".to_string());
@@ -317,5 +356,67 @@ mod tests {
     fn pure_prose_unaffected_by_cc_collapser() {
         let s = "Just a normal question with no harness gunk at all.";
         assert_eq!(clean_for_display(s), s);
+    }
+
+    #[test]
+    fn accept_edits_prompt_line_is_cc_marker() {
+        let s = "real prose\n⏵⏵ accept edits on · 1 shell · esc to interrupt · ↓ to manage · high\nmore prose";
+        let out = clean_for_display(s);
+        assert!(out.contains("real prose"));
+        assert!(out.contains("more prose"));
+        assert!(out.contains("[paste]"));
+        assert!(!out.contains("accept edits"));
+    }
+
+    #[test]
+    fn thinking_spinner_glyphs_are_cc_markers() {
+        for glyph in ["✢", "✻", "🟔"] {
+            let s = format!("ask\n{} Quantumizing…\nanswer", glyph);
+            let out = clean_for_display(&s);
+            assert!(out.contains("ask"), "glyph {} broke 'ask' line", glyph);
+            assert!(out.contains("answer"), "glyph {} broke 'answer'", glyph);
+            assert!(out.contains("[paste]"), "glyph {} not collapsed", glyph);
+            assert!(
+                !out.contains("Quantumizing"),
+                "glyph {} kept content",
+                glyph
+            );
+        }
+    }
+
+    #[test]
+    fn box_drawing_separator_lines_collapse() {
+        let s =
+            "before\n═══════════════════════════════ label ═══════════════════════════════\nafter";
+        let out = clean_for_display(s);
+        assert!(out.contains("before"));
+        assert!(out.contains("after"));
+        assert!(out.contains("[paste]"));
+        assert!(!out.contains("═══"));
+    }
+
+    #[test]
+    fn light_box_drawing_separator_collapses() {
+        let s = "q\n─────────────────────────────────────────\na";
+        let out = clean_for_display(s);
+        assert!(out.contains("[paste]"));
+        assert!(!out.contains("─────"));
+    }
+
+    #[test]
+    fn separator_chars_in_normal_prose_dont_collapse() {
+        // Single em-dash or short run inside prose is not a separator.
+        let s = "I tried 1 — 2 — 3 different things";
+        assert_eq!(clean_for_display(s), s);
+    }
+
+    #[test]
+    fn mixed_separators_and_glyphs_form_one_block() {
+        let s = "user prose\n═══ separator ═══\n✻ Cogitated for 2m\n⏵⏵ accept edits on · 1 shell\n─────────────\nactual question";
+        let out = clean_for_display(s);
+        assert!(out.contains("user prose"));
+        assert!(out.contains("actual question"));
+        // Should be exactly one collapsed block, not multiple.
+        assert_eq!(out.matches("[paste]").count(), 1);
     }
 }
